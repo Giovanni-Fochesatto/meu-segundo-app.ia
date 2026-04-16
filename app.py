@@ -25,7 +25,7 @@ def calcular_graham(lpa, vpa):
 
 def calcular_rsi_series(close: pd.Series, window: int = 14) -> pd.Series:
     """Retorna RSI completo (usado na simulação vetorizada)"""
-    if len(close) &lt; window:
+    if len(close) < window:
         return pd.Series([50.0] * len(close), index=close.index)
     delta = close.diff()
     gain = delta.where(delta &gt; 0, 0).rolling(window=window).mean()
