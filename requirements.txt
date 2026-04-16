@@ -1,0 +1,13 @@
+streamlit
+yfinance
+matplotlib
+pandas
+requests
+feedparser
+streamlit-autorefresh
+newspaper3k
+lxml_html_clean
+
+lxml
+googlesearch-python
+beautifulsoup4
