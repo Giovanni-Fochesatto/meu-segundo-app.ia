@@ -36,27 +36,27 @@ def calcular_rsi_series(close: pd.Series, window: int = 14) -> pd.Series:
 
 def calcular_rsi(data, window: int = 14):
     """RSI atual (compatível com código antigo)"""
-    if len(data) &lt; window:
+    if len(data) < window:
         return 50.0
     rsi_series = calcular_rsi_series(data, window)
     return float(rsi_series.iloc[-1])
 
 def calcular_score_value(info):
     score = 0
-    if 0 &lt; info.get("trailingPE", 99) &lt; 15:
+    if 0 < info.get("trailingPE", 99) < 15:
         score += 1
-    if 0 &lt; info.get("priceToBook", 99) &lt; 1.5:
+    if 0 < info.get("priceToBook", 99) < 1.5:
         score += 1
-    if (info.get("dividendYield", 0) or 0) * 100 &gt; 5:
+    if (info.get("dividendYield", 0) or 0) * 100 > 5:
         score += 1
-    if (info.get("operatingMargins", 0) or 0) &gt; 0.1:
+    if (info.get("operatingMargins", 0) or 0) > 0.1:
         score += 1
     return score
 
 # ===================== SIMULAÇÃO VETORIZADA (5 ANOS) =====================
 def simular_performance_historica(hist):
     """Versão vetorizada - muito mais rápida que o loop original"""
-    if len(hist) &lt; 300:
+    if len(hist) < 300:
         return 0.0, 0.0, 0.0, 0, 0
 
     close = hist["Close"].copy()
@@ -71,21 +71,21 @@ def simular_performance_historica(hist):
 
     # Sinais com filtro de dados válidos (15 dias à frente)
     buy_mask = (
-        (rsi &lt; 35)
-        &amp; (close &gt; sma200)
-        &amp; (macd &gt; sinal_macd)
-        &amp; retorno_15d.notna()
+        (rsi < 35)
+        & (close > sma200)
+        & (macd > sinal_macd)
+        & retorno_15d.notna()
     )
     sell_mask = (
-        (rsi &gt; 70)
-        &amp; ((close &lt; sma200) | (macd &lt; sinal_macd))
-        &amp; retorno_15d.notna()
+        (rsi > 70)
+        & ((close < sma200) | (macd < sinal_macd))
+        & retorno_15d.notna()
     )
 
     # Métricas de compra
     if buy_mask.any():
         ret_buy = retorno_15d[buy_mask]
-        taxa_compra = (ret_buy &gt; 0).mean() * 100
+        taxa_compra = (ret_buy > 0).mean() * 100
         retorno_medio = ret_buy.mean() * 100
         total_c = int(buy_mask.sum())
     else:
@@ -94,7 +94,7 @@ def simular_performance_historica(hist):
         total_c = 0
 
     # Métricas de venda
-    taxa_venda = (retorno_15d[sell_mask] &lt; 0).mean() * 100 if sell_mask.any() else 0.0
+    taxa_venda = (retorno_15d[sell_mask] < 0).mean() * 100 if sell_mask.any() else 0.0
     total_v = int(sell_mask.sum()) if sell_mask.any() else 0
 
     return taxa_compra, taxa_venda, retorno_medio, total_c, total_v
@@ -107,7 +107,7 @@ def obter_indices():
     for nome, ticker in indices.items():
         try:
             data = yf.Ticker(ticker).history(period="2d")
-            if not data.empty and len(data) &gt;= 2:
+            if not data.empty and len(data) >= 2:
                 atual = data["Close"].iloc[-1]
                 anterior = data["Close"].iloc[-2]
                 variacao = ((atual / anterior) - 1) * 100
@@ -125,7 +125,7 @@ def obter_cambio():
     for nome, ticker in moedas.items():
         try:
             data = yf.Ticker(ticker).history(period="2d")
-            if not data.empty and len(data) &gt;= 2:
+            if not data.empty and len(data) >= 2:
                 atual = data["Close"].iloc[-1]
                 anterior = data["Close"].iloc[-2]
                 variacao = ((atual / anterior) - 1) * 100
@@ -136,20 +136,17 @@ def obter_cambio():
             resultados[nome] = (0.0, 0.0)
     return resultados
 
-# ===================== DOWNLOAD EM BATCH (O MAIOR GANHO) =====================
+# ===================== DOWNLOAD EM BATCH =====================
 @st.cache_data(ttl=600, show_spinner=False)
 def obter_dados_batch(tickers, mercado):
-    """Baixa histórico de TODOS os tickers de uma vez + info individual"""
     if not tickers:
         return {}, {}
 
-    # Normaliza tickers brasileiros
     tickers_yf = [
         t + ".SA" if mercado == "Brasil" and not t.endswith(".SA") else t
         for t in tickers
     ]
 
-    # Download em massa
     hist_multi = yf.download(
         tickers_yf,
         period="5y",
@@ -166,7 +163,6 @@ def obter_dados_batch(tickers, mercado):
         t_yf = tickers_yf[i]
         try:
             info_dict[t_orig] = yf.Ticker(t_yf).info
-            # Extrai histórico correto (multi ou single ticker)
             if len(tickers) == 1:
                 hist_dict[t_orig] = hist_multi
             else:
@@ -177,13 +173,12 @@ def obter_dados_batch(tickers, mercado):
 
     return info_dict, hist_dict
 
-# ===================== PROCESSAMENTO CENTRAL (LIMPO) =====================
+# ===================== PROCESSAMENTO CENTRAL =====================
 def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
                     f_pl, f_pvp, f_dy, f_div_ebitda, busca_direta, mercado):
     if hist.empty or not info:
         return None
 
-    # === Métricas fundamentais ===
     pl = info.get("trailingPE", 0) or 0
     pvp = info.get("priceToBook", 0) or 0
     dy = (info.get("dividendYield", 0) or 0) * 100
@@ -196,19 +191,17 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
     vpa = info.get("bookValue", 0) or 0
     p_justo = calcular_graham(lpa, vpa)
     p_atual = float(hist["Close"].iloc[-1])
-    upside = ((p_justo / p_atual) - 1) * 100 if p_justo &gt; 0 else 0.0
+    upside = ((p_justo / p_atual) - 1) * 100 if p_justo > 0 else 0.0
 
-    # === Filtro de valuation ===
     if not busca_direta and filtros_ativos:
-        if not (pl &lt;= f_pl and pvp &lt;= f_pvp and dy &gt;= f_dy and div_e &lt;= f_div_ebitda):
+        if not (pl <= f_pl and pvp <= f_pvp and dy >= f_dy and div_e <= f_div_ebitda):
             return None
 
-    # === Notícias Google ===
     noticias_texto = ""
     lista_links = []
     try:
         lang = "pt-BR" if mercado == "Brasil" else "en-US"
-        url = f"https://news.google.com/rss/search?q={tkr}&amp;hl={lang}"
+        url = f"https://news.google.com/rss/search?q={tkr}&hl={lang}"
         feed = feedparser.parse(url)
         for entry in feed.entries[:5]:
             titulo = entry.title.lower()
@@ -223,37 +216,35 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
     rsi_val = calcular_rsi(hist["Close"])
     score_value = calcular_score_value(info)
 
-    # === Assertividade 5 anos (vetorizada) ===
     taxa_compra, taxa_venda, retorno_medio, total_c, total_v = simular_performance_historica(hist)
 
-    # === Lógica de veredito (igual à original) ===
     motivo_detalhe = ""
     if estrategia_ativa == "Value Investing (Graham/Buffett)":
-        if upside &gt; 20 and score_value &gt;= 3:
+        if upside > 20 and score_value >= 3:
             veredito, cor = "VALOR ✅", "success"
             motivo_detalhe = f"Forte margem de segurança ({upside:.1f}%) e bons fundamentos (Score: {score_value}/4)."
-        elif upside &lt; 0:
+        elif upside < 0:
             veredito, cor = "CARO 🚨", "error"
             motivo_detalhe = "Preço acima do valor intrínseco de Graham."
         else:
             veredito, cor = "NEUTRO ⚖️", "warning"
             motivo_detalhe = "Ativo próximo ao preço justo, sem margem de segurança clara."
     else:
-        if rsi_val &gt; 70 and score_n &gt; score_p:
+        if rsi_val > 70 and score_n > score_p:
             veredito, cor = "VENDA 🚨", "error"
             motivo_detalhe = f"RSI alto ({rsi_val:.1f}) e notícias negativas. Possível topo."
-        elif rsi_val &gt; 75:
+        elif rsi_val > 75:
             veredito, cor = "VENDA 🚨", "error"
             motivo_detalhe = f"RSI em nível extremo ({rsi_val:.1f}). Ativo sobrecomprado."
-        elif score_p &gt; score_n and rsi_val &lt; 65:
+        elif score_p > score_n and rsi_val < 65:
             veredito, cor = "COMPRA ✅", "success"
             motivo_detalhe = f"Notícias positivas e RSI saudável ({rsi_val:.1f})."
-        elif score_n &gt; score_p or rsi_val &gt; 70:
+        elif score_n > score_p or rsi_val > 70:
             veredito, cor = "CAUTELA ⚠️", "error"
             lista_motivos = []
-            if rsi_val &gt; 70:
+            if rsi_val > 70:
                 lista_motivos.append(f"RSI alto ({rsi_val:.1f})")
-            if score_n &gt; score_p:
+            if score_n > score_p:
                 lista_motivos.append("Sentimento negativo")
             motivo_detalhe = " | ".join(lista_motivos)
         else:
@@ -320,7 +311,6 @@ if st.sidebar.button("Resetar Filtros"):
     st.session_state.filtros_ativos = False
     st.rerun()
 
-# Lista base (mantida igual)
 if mercado_selecionado == "Brasil":
     lista_base = [
         "PETR4", "VALE3", "ITUB4", "BBAS3", "BBDC4", "SANB11", "B3SA3",
@@ -345,7 +335,6 @@ st.caption(f"Atualização: {time.strftime('%H:%M:%S')} | Local: Blumenau/SC")
 
 # ===================== PROCESSAMENTO PRINCIPAL =====================
 tickers_para_processar = [busca_direta] if busca_direta else lista_base
-
 dados_vencedoras = []
 
 if tickers_para_processar:
@@ -413,8 +402,6 @@ if dados_vencedoras:
             col_ver.success(f"**{acao['Veredito']}**")
         elif acao["Cor"] == "error":
             col_ver.error(f"**{acao['Veredito']}**")
-            if acao["Motivo"]:
-                st.info(f"👉 **Atenção:** {acao['Motivo']}")
         else:
             col_ver.warning(f"**{acao['Veredito']}**")
 
