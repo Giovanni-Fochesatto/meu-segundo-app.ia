@@ -28,8 +28,8 @@ def calcular_rsi_series(close: pd.Series, window: int = 14) -> pd.Series:
     if len(close) < window:
         return pd.Series([50.0] * len(close), index=close.index)
     delta = close.diff()
-    gain = delta.where(delta &gt; 0, 0).rolling(window=window).mean()
-    loss = (-delta.where(delta &lt; 0, 0)).rolling(window=window).mean()
+    gain = delta.where(delta > 0, 0).rolling(window=window).mean()
+    loss = -delta.where(delta < 0, 0).rolling(window=window).mean()
     rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
     return rsi
