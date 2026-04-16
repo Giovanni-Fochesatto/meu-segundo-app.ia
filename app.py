@@ -103,7 +103,7 @@ def obter_indices():
     return resultados
 
 
-@st.cache_data(ttl=120, show_spinner=False)  # ttl menor para atualizar mais rápido
+@st.cache_data(ttl=120, show_spinner=False)
 def obter_cambio():
     moedas = {
         "Dólar": "USDBRL=X",
@@ -128,44 +128,47 @@ def obter_cambio():
         except Exception:
             resultados[nome] = (0.0, 0.0)
 
-    # ===================== BITCOIN - FALLBACK FORTEMENTE MELHORADO =====================
-    btc_valor = 0.0
+    # ===================== BITCOIN - SEMPRE EM REAL =====================
+    btc_em_real = 0.0
     variacao_btc = 0.0
 
-    tickers_btc = ["BTC-BRL", "BTCUSD=X", "BTC-USD", "BTCBRL=X"]
+    # Tentativa 1: BTC-BRL direto
+    try:
+        t = yf.Ticker("BTC-BRL")
+        data = t.history(period="2d")
+        if not data.empty and len(data) >= 2:
+            atual = data["Close"].iloc[-1]
+            anterior = data["Close"].iloc[-2]
+            variacao_btc = ((atual / anterior) - 1) * 100
+        else:
+            atual = t.fast_info.last_price
+        if atual > 10000:
+            btc_em_real = atual
+    except:
+        pass
 
-    for ticker_btc in tickers_btc:
-        try:
-            t = yf.Ticker(ticker_btc)
-            data = t.history(period="2d")
-            
-            if not data.empty and len(data) >= 2:
-                atual = data["Close"].iloc[-1]
-                anterior = data["Close"].iloc[-2]
-                variacao = ((atual / anterior) - 1) * 100
-            else:
-                atual = t.fast_info.last_price
-                variacao = 0.0
-
-            if atual > 10000:  # valor plausível para Bitcoin
-                btc_valor = atual
-                variacao_btc = variacao
-                break
-        except:
-            continue
-
-    # Último fallback: BTC-USD convertido pelo dólar atual
-    if btc_valor < 10000:
+    # Tentativa 2: Converter BTC-USD para Real usando o dólar atual
+    if btc_em_real < 10000:
         try:
             btc_usd = yf.Ticker("BTC-USD").fast_info.last_price
-            dolar = resultados.get("Dólar", (5.7, 0))[0]
-            if btc_usd > 1000 and dolar > 4:
-                btc_valor = btc_usd * dolar
+            dolar_real = resultados.get("Dólar", (5.7, 0))[0]   # pega o dólar atual
+            if btc_usd > 1000 and dolar_real > 4:
+                btc_em_real = btc_usd * dolar_real
                 variacao_btc = 0.0
         except:
             pass
 
-    resultados["Bitcoin"] = (btc_valor, variacao_btc)
+    # Tentativa 3: Último recurso (ticker alternativo)
+    if btc_em_real < 10000:
+        try:
+            t = yf.Ticker("BTCBRL=X")
+            atual = t.fast_info.last_price
+            if atual > 10000:
+                btc_em_real = atual
+        except:
+            pass
+
+    resultados["Bitcoin"] = (btc_em_real, variacao_btc)
     return resultados
 
 
@@ -318,7 +321,7 @@ col1, col2 = st.sidebar.columns(2)
 col1.metric("Dólar", f"R$ {cambio['Dólar'][0]:.2f}", f"{cambio['Dólar'][1]:.2f}%")
 col2.metric("Euro",  f"R$ {cambio['Euro'][0]:.2f}",  f"{cambio['Euro'][1]:.2f}%")
 
-# Segunda linha: Libra | Bitcoin
+# Segunda linha: Libra | Bitcoin (sempre em Real)
 col3, col4 = st.sidebar.columns(2)
 col3.metric("Libra", f"R$ {cambio['Libra'][0]:.2f}", f"{cambio['Libra'][1]:.2f}%")
 col4.metric("Bitcoin", f"R$ {cambio['Bitcoin'][0]:,.0f}", f"{cambio['Bitcoin'][1]:.2f}%")
