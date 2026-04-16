@@ -103,7 +103,7 @@ def obter_indices():
     return resultados
 
 
-@st.cache_data(ttl=180, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)  # ttl menor para atualizar mais rápido
 def obter_cambio():
     moedas = {
         "Dólar": "USDBRL=X",
@@ -128,35 +128,44 @@ def obter_cambio():
         except Exception:
             resultados[nome] = (0.0, 0.0)
 
-    # ===================== BITCOIN COM FALLBACK ROBUSTO =====================
-    try:
-        # Tentativa 1: BTC direto em Real
-        btc = yf.Ticker("BTC-BRL")
-        data = btc.history(period="2d")
-        
-        if not data.empty and len(data) >= 2:
-            atual = data["Close"].iloc[-1]
-            anterior = data["Close"].iloc[-2]
-            variacao = ((atual / anterior) - 1) * 100
-        else:
-            atual = btc.fast_info.last_price
-            variacao = 0.0
+    # ===================== BITCOIN - FALLBACK FORTEMENTE MELHORADO =====================
+    btc_valor = 0.0
+    variacao_btc = 0.0
 
-        # Tentativa 2: Se ainda estiver baixo ou zero → converte BTC-USD pelo dólar
-        if atual < 1000:
-            try:
-                btc_usd = yf.Ticker("BTC-USD").fast_info.last_price
-                dolar_atual = resultados.get("Dólar", (5.7, 0))[0]
-                atual = btc_usd * dolar_atual
+    tickers_btc = ["BTC-BRL", "BTCUSD=X", "BTC-USD", "BTCBRL=X"]
+
+    for ticker_btc in tickers_btc:
+        try:
+            t = yf.Ticker(ticker_btc)
+            data = t.history(period="2d")
+            
+            if not data.empty and len(data) >= 2:
+                atual = data["Close"].iloc[-1]
+                anterior = data["Close"].iloc[-2]
+                variacao = ((atual / anterior) - 1) * 100
+            else:
+                atual = t.fast_info.last_price
                 variacao = 0.0
-            except:
-                pass
 
-        resultados["Bitcoin"] = (atual, variacao)
+            if atual > 10000:  # valor plausível para Bitcoin
+                btc_valor = atual
+                variacao_btc = variacao
+                break
+        except:
+            continue
 
-    except Exception:
-        resultados["Bitcoin"] = (0.0, 0.0)
+    # Último fallback: BTC-USD convertido pelo dólar atual
+    if btc_valor < 10000:
+        try:
+            btc_usd = yf.Ticker("BTC-USD").fast_info.last_price
+            dolar = resultados.get("Dólar", (5.7, 0))[0]
+            if btc_usd > 1000 and dolar > 4:
+                btc_valor = btc_usd * dolar
+                variacao_btc = 0.0
+        except:
+            pass
 
+    resultados["Bitcoin"] = (btc_valor, variacao_btc)
     return resultados
 
 
@@ -309,7 +318,7 @@ col1, col2 = st.sidebar.columns(2)
 col1.metric("Dólar", f"R$ {cambio['Dólar'][0]:.2f}", f"{cambio['Dólar'][1]:.2f}%")
 col2.metric("Euro",  f"R$ {cambio['Euro'][0]:.2f}",  f"{cambio['Euro'][1]:.2f}%")
 
-# Segunda linha: Libra | Bitcoin (conforme solicitado)
+# Segunda linha: Libra | Bitcoin
 col3, col4 = st.sidebar.columns(2)
 col3.metric("Libra", f"R$ {cambio['Libra'][0]:.2f}", f"{cambio['Libra'][1]:.2f}%")
 col4.metric("Bitcoin", f"R$ {cambio['Bitcoin'][0]:,.0f}", f"{cambio['Bitcoin'][1]:.2f}%")
@@ -391,10 +400,10 @@ if dados_vencedoras:
     st.subheader(f"🏆 Ranking de Oportunidades - Estratégia: {estrategia_ativa}")
     with st.expander("📌 Legenda de Sinais e Vereditos"):
         st.markdown("""
-        * **VALOR ✅**: Grande desconto + bons fundamentos  
-        * **COMPRA ✅**: RSI saudável + notícias positivas  
-        * **VENDA / CARO 🚨**: RSI extremo ou preço acima do justo  
-        * **CAUTELA ⚠️**: Divergência entre preço, RSI e sentimento  
+        * **VALOR ✅**: Grande desconto + bons fundamentos
+        * **COMPRA ✅**: RSI saudável + notícias positivas
+        * **VENDA / CARO 🚨**: RSI extremo ou preço acima do justo
+        * **CAUTELA ⚠️**: Divergência entre preço, RSI e sentimento
         * **Graham**: Valor intrínseco calculado pela fórmula de Benjamin Graham
         """)
 
