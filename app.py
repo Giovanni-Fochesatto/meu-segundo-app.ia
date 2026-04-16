@@ -50,7 +50,6 @@ def calcular_score_value(info):
         score += 1
     return score
 
-# ===================== SIMULAÇÃO VETORIZADA (5 ANOS) =====================
 def simular_performance_historica(hist):
     if len(hist) < 300:
         return 0.0, 0.0, 0.0, 0, 0
@@ -64,15 +63,10 @@ def simular_performance_historica(hist):
     retorno_15d = close.shift(-15) / close - 1
 
     buy_mask = (
-        (rsi < 35) &
-        (close > sma200) &
-        (macd > sinal_macd) &
-        retorno_15d.notna()
+        (rsi < 35) & (close > sma200) & (macd > sinal_macd) & retorno_15d.notna()
     )
     sell_mask = (
-        (rsi > 70) &
-        ((close < sma200) | (macd < sinal_macd)) &
-        retorno_15d.notna()
+        (rsi > 70) & ((close < sma200) | (macd < sinal_macd)) & retorno_15d.notna()
     )
 
     if buy_mask.any():
@@ -87,7 +81,6 @@ def simular_performance_historica(hist):
 
     taxa_venda = (retorno_15d[sell_mask] < 0).mean() * 100 if sell_mask.any() else 0.0
     total_v = int(sell_mask.sum()) if sell_mask.any() else 0
-
     return taxa_compra, taxa_venda, retorno_medio, total_c, total_v
 
 # ===================== CACHE DE MERCADO =====================
@@ -110,34 +103,60 @@ def obter_indices():
     return resultados
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=180, show_spinner=False)
 def obter_cambio():
     moedas = {
         "Dólar": "USDBRL=X",
         "Euro": "EURBRL=X",
-        "Libra": "GBPBRL=X",      # Nova moeda adicionada
-        "Bitcoin": "BTC-BRL"
+        "Libra": "GBPBRL=X",
     }
     resultados = {}
+
+    # Moedas fiduciárias
     for nome, ticker in moedas.items():
         try:
             ticker_obj = yf.Ticker(ticker)
             data = ticker_obj.history(period="2d")
-            
             if not data.empty and len(data) >= 2:
                 atual = data["Close"].iloc[-1]
                 anterior = data["Close"].iloc[-2]
                 variacao = ((atual / anterior) - 1) * 100
             else:
-                # Fallback robusto (especialmente bom para Bitcoin)
                 atual = ticker_obj.fast_info.last_price
                 variacao = 0.0
-                
             resultados[nome] = (atual, variacao)
-            
         except Exception:
             resultados[nome] = (0.0, 0.0)
-    
+
+    # ===================== BITCOIN COM FALLBACK ROBUSTO =====================
+    try:
+        # Tentativa 1: BTC direto em Real
+        btc = yf.Ticker("BTC-BRL")
+        data = btc.history(period="2d")
+        
+        if not data.empty and len(data) >= 2:
+            atual = data["Close"].iloc[-1]
+            anterior = data["Close"].iloc[-2]
+            variacao = ((atual / anterior) - 1) * 100
+        else:
+            atual = btc.fast_info.last_price
+            variacao = 0.0
+
+        # Tentativa 2: Se ainda estiver baixo ou zero → converte BTC-USD pelo dólar
+        if atual < 1000:
+            try:
+                btc_usd = yf.Ticker("BTC-USD").fast_info.last_price
+                dolar_atual = resultados.get("Dólar", (5.7, 0))[0]
+                atual = btc_usd * dolar_atual
+                variacao = 0.0
+            except:
+                pass
+
+        resultados["Bitcoin"] = (atual, variacao)
+
+    except Exception:
+        resultados["Bitcoin"] = (0.0, 0.0)
+
     return resultados
 
 
@@ -179,7 +198,6 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
                     f_pl, f_pvp, f_dy, f_div_ebitda, busca_direta, mercado):
     if hist.empty or not info:
         return None
-
     pl = info.get("trailingPE", 0) or 0
     pvp = info.get("priceToBook", 0) or 0
     dy = (info.get("dividendYield", 0) or 0) * 100
@@ -187,7 +205,6 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
     div_liq = info.get("totalDebt", 0) or 0
     cash = info.get("totalCash", 0) or 0
     div_e = (div_liq - cash) / ebitda if ebitda != 0 else 999.0
-
     lpa = info.get("trailingEps", 0) or 0
     vpa = info.get("bookValue", 0) or 0
     p_justo = calcular_graham(lpa, vpa)
@@ -198,7 +215,6 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
         if not (pl <= f_pl and pvp <= f_pvp and dy >= f_dy and div_e <= f_div_ebitda):
             return None
 
-    # Notícias
     noticias_texto = ""
     lista_links = []
     try:
@@ -219,7 +235,6 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
     score_value = calcular_score_value(info)
     taxa_compra, taxa_venda, retorno_medio, total_c, total_v = simular_performance_historica(hist)
 
-    # Lógica de veredito (mantida igual)
     if estrategia_ativa == "Value Investing (Graham/Buffett)":
         if upside > 20 and score_value >= 3:
             veredito, cor = "VALOR ✅", "success"
@@ -289,16 +304,15 @@ st.sidebar.divider()
 st.sidebar.subheader("💱 Câmbio em Tempo Real")
 cambio = obter_cambio()
 
-# 3 colunas para moedas fiduciárias
-col_c1, col_c2, col_c3 = st.sidebar.columns(3)
-col_c1.metric("Dólar", f"R$ {cambio['Dólar'][0]:.2f}", f"{cambio['Dólar'][1]:.2f}%")
-col_c2.metric("Euro",  f"R$ {cambio['Euro'][0]:.2f}",  f"{cambio['Euro'][1]:.2f}%")
-col_c3.metric("Libra", f"R$ {cambio['Libra'][0]:.2f}", f"{cambio['Libra'][1]:.2f}%")
+# Primeira linha: Dólar | Euro
+col1, col2 = st.sidebar.columns(2)
+col1.metric("Dólar", f"R$ {cambio['Dólar'][0]:.2f}", f"{cambio['Dólar'][1]:.2f}%")
+col2.metric("Euro",  f"R$ {cambio['Euro'][0]:.2f}",  f"{cambio['Euro'][1]:.2f}%")
 
-# Bitcoin em destaque (abaixo)
-st.sidebar.metric("Bitcoin", 
-                  f"R$ {cambio['Bitcoin'][0]:,.0f}", 
-                  f"{cambio['Bitcoin'][1]:.2f}%")
+# Segunda linha: Libra | Bitcoin (conforme solicitado)
+col3, col4 = st.sidebar.columns(2)
+col3.metric("Libra", f"R$ {cambio['Libra'][0]:.2f}", f"{cambio['Libra'][1]:.2f}%")
+col4.metric("Bitcoin", f"R$ {cambio['Bitcoin'][0]:,.0f}", f"{cambio['Bitcoin'][1]:.2f}%")
 
 st.sidebar.divider()
 
@@ -322,7 +336,7 @@ if st.sidebar.button("Resetar Filtros"):
     st.session_state.filtros_ativos = False
     st.rerun()
 
-# Lista de ativos
+# ===================== LISTA DE ATIVOS =====================
 if mercado_selecionado == "Brasil":
     lista_base = [
         "PETR4", "VALE3", "ITUB4", "BBAS3", "BBDC4", "SANB11", "B3SA3",
