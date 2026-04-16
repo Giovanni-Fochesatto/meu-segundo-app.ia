@@ -8,7 +8,6 @@ from streamlit_autorefresh import st_autorefresh
 
 # ===================== CONFIGURAÇÕES =====================
 st.set_page_config(page_title="Monitor IA Pro", layout="wide")
-
 st_autorefresh(interval=300 * 1000, key="data_refresh")
 
 if "filtros_ativos" not in st.session_state:
@@ -24,7 +23,6 @@ def calcular_graham(lpa, vpa):
     return 0.0
 
 def calcular_rsi_series(close: pd.Series, window: int = 14) -> pd.Series:
-    """Retorna RSI completo (usado na simulação vetorizada)"""
     if len(close) < window:
         return pd.Series([50.0] * len(close), index=close.index)
     delta = close.diff()
@@ -35,7 +33,6 @@ def calcular_rsi_series(close: pd.Series, window: int = 14) -> pd.Series:
     return rsi
 
 def calcular_rsi(data, window: int = 14):
-    """RSI atual (compatível com código antigo)"""
     if len(data) < window:
         return 50.0
     rsi_series = calcular_rsi_series(data, window)
@@ -55,10 +52,8 @@ def calcular_score_value(info):
 
 # ===================== SIMULAÇÃO VETORIZADA (5 ANOS) =====================
 def simular_performance_historica(hist):
-    """Versão vetorizada - muito mais rápida que o loop original"""
     if len(hist) < 300:
         return 0.0, 0.0, 0.0, 0, 0
-
     close = hist["Close"].copy()
     rsi = calcular_rsi_series(close)
     sma200 = close.rolling(window=200).mean()
@@ -66,23 +61,20 @@ def simular_performance_historica(hist):
     exp26 = close.ewm(span=26, adjust=False).mean()
     macd = exp12 - exp26
     sinal_macd = macd.ewm(span=9, adjust=False).mean()
-
     retorno_15d = close.shift(-15) / close - 1
 
-    # Sinais com filtro de dados válidos (15 dias à frente)
     buy_mask = (
-        (rsi < 35)
-        & (close > sma200)
-        & (macd > sinal_macd)
-        & retorno_15d.notna()
+        (rsi < 35) &
+        (close > sma200) &
+        (macd > sinal_macd) &
+        retorno_15d.notna()
     )
     sell_mask = (
-        (rsi > 70)
-        & ((close < sma200) | (macd < sinal_macd))
-        & retorno_15d.notna()
+        (rsi > 70) &
+        ((close < sma200) | (macd < sinal_macd)) &
+        retorno_15d.notna()
     )
 
-    # Métricas de compra
     if buy_mask.any():
         ret_buy = retorno_15d[buy_mask]
         taxa_compra = (ret_buy > 0).mean() * 100
@@ -93,7 +85,6 @@ def simular_performance_historica(hist):
         retorno_medio = 0.0
         total_c = 0
 
-    # Métricas de venda
     taxa_venda = (retorno_15d[sell_mask] < 0).mean() * 100 if sell_mask.any() else 0.0
     total_v = int(sell_mask.sum()) if sell_mask.any() else 0
 
@@ -118,35 +109,47 @@ def obter_indices():
             resultados[nome] = (0.0, 0.0)
     return resultados
 
+
 @st.cache_data(ttl=300, show_spinner=False)
 def obter_cambio():
-    moedas = {"Dólar": "USDBRL=X", "Euro": "EURBRL=X", "Bitcoin": "BTC-BRL"}
+    moedas = {
+        "Dólar": "USDBRL=X",
+        "Euro": "EURBRL=X",
+        "Libra": "GBPBRL=X",      # Nova moeda adicionada
+        "Bitcoin": "BTC-BRL"
+    }
     resultados = {}
     for nome, ticker in moedas.items():
         try:
-            data = yf.Ticker(ticker).history(period="2d")
+            ticker_obj = yf.Ticker(ticker)
+            data = ticker_obj.history(period="2d")
+            
             if not data.empty and len(data) >= 2:
                 atual = data["Close"].iloc[-1]
                 anterior = data["Close"].iloc[-2]
                 variacao = ((atual / anterior) - 1) * 100
-                resultados[nome] = (atual, variacao)
             else:
-                resultados[nome] = (yf.Ticker(ticker).fast_info.last_price, 0.0)
-        except:
+                # Fallback robusto (especialmente bom para Bitcoin)
+                atual = ticker_obj.fast_info.last_price
+                variacao = 0.0
+                
+            resultados[nome] = (atual, variacao)
+            
+        except Exception:
             resultados[nome] = (0.0, 0.0)
+    
     return resultados
+
 
 # ===================== DOWNLOAD EM BATCH =====================
 @st.cache_data(ttl=600, show_spinner=False)
 def obter_dados_batch(tickers, mercado):
     if not tickers:
         return {}, {}
-
     tickers_yf = [
         t + ".SA" if mercado == "Brasil" and not t.endswith(".SA") else t
         for t in tickers
     ]
-
     hist_multi = yf.download(
         tickers_yf,
         period="5y",
@@ -155,10 +158,8 @@ def obter_dados_batch(tickers, mercado):
         progress=False,
         threads=True,
     )
-
     info_dict = {}
     hist_dict = {}
-
     for i, t_orig in enumerate(tickers):
         t_yf = tickers_yf[i]
         try:
@@ -170,8 +171,8 @@ def obter_dados_batch(tickers, mercado):
         except Exception:
             info_dict[t_orig] = {}
             hist_dict[t_orig] = pd.DataFrame()
-
     return info_dict, hist_dict
+
 
 # ===================== PROCESSAMENTO CENTRAL =====================
 def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
@@ -197,6 +198,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
         if not (pl <= f_pl and pvp <= f_pvp and dy >= f_dy and div_e <= f_div_ebitda):
             return None
 
+    # Notícias
     noticias_texto = ""
     lista_links = []
     try:
@@ -215,10 +217,9 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
 
     rsi_val = calcular_rsi(hist["Close"])
     score_value = calcular_score_value(info)
-
     taxa_compra, taxa_venda, retorno_medio, total_c, total_v = simular_performance_historica(hist)
 
-    motivo_detalhe = ""
+    # Lógica de veredito (mantida igual)
     if estrategia_ativa == "Value Investing (Graham/Buffett)":
         if upside > 20 and score_value >= 3:
             veredito, cor = "VALOR ✅", "success"
@@ -232,10 +233,10 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
     else:
         if rsi_val > 70 and score_n > score_p:
             veredito, cor = "VENDA 🚨", "error"
-            motivo_detalhe = f"RSI alto ({rsi_val:.1f}) e notícias negativas. Possível topo."
+            motivo_detalhe = f"RSI alto ({rsi_val:.1f}) e notícias negativas."
         elif rsi_val > 75:
             veredito, cor = "VENDA 🚨", "error"
-            motivo_detalhe = f"RSI em nível extremo ({rsi_val:.1f}). Ativo sobrecomprado."
+            motivo_detalhe = f"RSI em nível extremo ({rsi_val:.1f})."
         elif score_p > score_n and rsi_val < 65:
             veredito, cor = "COMPRA ✅", "success"
             motivo_detalhe = f"Notícias positivas e RSI saudável ({rsi_val:.1f})."
@@ -249,7 +250,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
             motivo_detalhe = " | ".join(lista_motivos)
         else:
             veredito, cor = "NEUTRO ⚖️", "warning"
-            motivo_detalhe = "Indicadores técnicos e notícias em equilíbrio."
+            motivo_detalhe = "Indicadores em equilíbrio."
 
     return {
         "Ticker": tkr,
@@ -274,6 +275,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
         "ValueScore": score_value,
     }
 
+
 # ===================== SIDEBAR =====================
 st.sidebar.title("🌎 Mercado e Estratégia")
 
@@ -281,14 +283,23 @@ st.sidebar.subheader("📈 Índices Mundiais")
 indices_data = obter_indices()
 for nome, (valor, var) in indices_data.items():
     st.sidebar.metric(nome, f"{valor:,.0f} pts", f"{var:.2f}%")
+
 st.sidebar.divider()
 
 st.sidebar.subheader("💱 Câmbio em Tempo Real")
 cambio = obter_cambio()
-col_c1, col_c2 = st.sidebar.columns(2)
+
+# 3 colunas para moedas fiduciárias
+col_c1, col_c2, col_c3 = st.sidebar.columns(3)
 col_c1.metric("Dólar", f"R$ {cambio['Dólar'][0]:.2f}", f"{cambio['Dólar'][1]:.2f}%")
-col_c2.metric("Euro", f"R$ {cambio['Euro'][0]:.2f}", f"{cambio['Euro'][1]:.2f}%")
-st.sidebar.metric("Bitcoin", f"R$ {cambio['Bitcoin'][0]:.0f}", f"{cambio['Bitcoin'][1]:.2f}%")
+col_c2.metric("Euro",  f"R$ {cambio['Euro'][0]:.2f}",  f"{cambio['Euro'][1]:.2f}%")
+col_c3.metric("Libra", f"R$ {cambio['Libra'][0]:.2f}", f"{cambio['Libra'][1]:.2f}%")
+
+# Bitcoin em destaque (abaixo)
+st.sidebar.metric("Bitcoin", 
+                  f"R$ {cambio['Bitcoin'][0]:,.0f}", 
+                  f"{cambio['Bitcoin'][1]:.2f}%")
+
 st.sidebar.divider()
 
 mercado_selecionado = st.sidebar.radio(
@@ -311,6 +322,7 @@ if st.sidebar.button("Resetar Filtros"):
     st.session_state.filtros_ativos = False
     st.rerun()
 
+# Lista de ativos
 if mercado_selecionado == "Brasil":
     lista_base = [
         "PETR4", "VALE3", "ITUB4", "BBAS3", "BBDC4", "SANB11", "B3SA3",
@@ -344,7 +356,6 @@ if tickers_para_processar:
     for tkr in tickers_para_processar:
         info = infos.get(tkr, {})
         hist = hists.get(tkr, pd.DataFrame())
-
         resultado = processar_ativo(
             tkr=tkr,
             info=info,
@@ -364,14 +375,13 @@ if tickers_para_processar:
 # ===================== INTERFACE =====================
 if dados_vencedoras:
     st.subheader(f"🏆 Ranking de Oportunidades - Estratégia: {estrategia_ativa}")
-
     with st.expander("📌 Legenda de Sinais e Vereditos"):
         st.markdown("""
-        * **VALOR ✅**: (Value) Grande desconto + bons fundamentos  
-        * **COMPRA ✅**: (Técnica) RSI saudável + notícias positivas  
+        * **VALOR ✅**: Grande desconto + bons fundamentos  
+        * **COMPRA ✅**: RSI saudável + notícias positivas  
         * **VENDA / CARO 🚨**: RSI extremo ou preço acima do justo  
         * **CAUTELA ⚠️**: Divergência entre preço, RSI e sentimento  
-        * **Graham**: Valor intrínseco. Upside = potencial de valorização
+        * **Graham**: Valor intrínseco calculado pela fórmula de Benjamin Graham
         """)
 
     df_resumo = pd.DataFrame(dados_vencedoras)[
@@ -394,7 +404,6 @@ if dados_vencedoras:
         st.divider()
         col_tit, col_ver, col_acc_c, col_acc_v = st.columns([3, 1, 1, 1])
         col_tit.header(f"🏢 {acao['Empresa']} ({acao['Ticker']})")
-
         col_acc_c.metric("Assertividade Compra", f"{acao['TaxaCompra']:.1f}%", f"{acao['QtdCompra']} sinais")
         col_acc_v.metric("Assertividade Venda", f"{acao['TaxaVenda']:.1f}%", f"{acao['QtdVenda']} sinais")
 
@@ -426,5 +435,6 @@ if dados_vencedoras:
             st.markdown("**Últimas Manchetes:**")
             for n in acao["Links"]:
                 st.markdown(f"• [{n['titulo']}]({n['link']})")
+
 else:
     st.info("💡 Use os filtros ou faça uma busca direta para começar.")
