@@ -1,36 +1,4 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <title>✅ Código Refatorado Completo - Monitor IA Pro</title>
-    <style>
-        body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; max-width: 1000px; margin: 40px auto; padding: 20px; background: #f8f9fa; }
-        pre { background: #1e1e1e; color: #d4d4d4; padding: 20px; border-radius: 12px; overflow-x: auto; font-size: 14px; }
-        h1, h2 { color: #1e88e5; }
-        .dica { background: #e3f2fd; padding: 15px; border-radius: 8px; margin: 20px 0; }
-    </style>
-</head>
-<body>
-    <h1>✅ Código 100% Refatorado e Otimizado!</h1>
-    <p><strong>Principais melhorias aplicadas:</strong></p>
-    <ul>
-        <li>✅ <strong>Download em batch</strong> com <code>yf.download</code> → 5–10× mais rápido</li>
-        <li>✅ Simulação histórica <strong>vetorizada</strong> (sem <code>for</code> lento)</li>
-        <li>✅ Função <code>processar_ativo()</code> separada → código limpo e fácil de manter</li>
-        <li>✅ Caching mais inteligente + <code>show_spinner=False</code></li>
-        <li>✅ RSI reutilizável (série + valor atual)</li>
-        <li>✅ Mesma interface, mesma lógica de negócio e mesmos vereditos</li>
-        <li>✅ Tratamento robusto de erros e edge cases</li>
-        <li>✅ Código modular e comentado</li>
-    </ul>
-
-    <div class="dica">
-        <strong>Como usar:</strong> Copie todo o código abaixo e substitua o seu arquivo <code>app.py</code>.<br>
-        Não precisa instalar nenhuma biblioteca nova (mantive as mesmas do original).
-    </div>
-
-    <h2>Código completo refatorado</h2>
-    <pre><code>import streamlit as st
+import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -473,12 +441,3 @@ if dados_vencedoras:
                 st.markdown(f"• [{n['titulo']}]({n['link']})")
 else:
     st.info("💡 Use os filtros ou faça uma busca direta para começar.")
-
-# ===================== FIM =====================
-st.caption("🚀 Refatorado por Grok • Mais rápido, limpo e profissional")
-</code></pre>
-
-    <p><strong>Pronto!</strong> Cole esse código no seu <code>app.py</code> e rode. Vai sentir a diferença de velocidade imediatamente.</p>
-    <p>Qualquer ajuste fino (ex: adicionar mais indicadores, mudar cores, etc) é só pedir!</p>
-</body>
-</html>
