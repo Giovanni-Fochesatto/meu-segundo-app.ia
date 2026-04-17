@@ -7,13 +7,21 @@ import feedparser
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from streamlit_autorefresh import st_autorefresh
+import requests  # ← Adicionado para Telegram
+
 # ===================== CONFIGURAÇÕES =====================
 st.set_page_config(page_title="Monitor IA Pro", layout="wide")
 st_autorefresh(interval=300 * 1000, key="data_refresh")
 if "filtros_ativos" not in st.session_state:
     st.session_state.filtros_ativos = False
+if "telegram_ativado" not in st.session_state:
+    st.session_state.telegram_ativado = False
+if "ultimos_alertas" not in st.session_state:
+    st.session_state.ultimos_alertas = set()
+
 def ativar_filtros():
     st.session_state.filtros_ativos = True
+
 # ===================== FUNÇÕES TÉCNICAS =====================
 def calcular_graham(lpa, vpa):
     if lpa > 0 and vpa > 0:
@@ -244,10 +252,6 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
     p_justo = calcular_graham(lpa, vpa)
     p_atual = float(hist["Close"].iloc[-1]) if not hist.empty else 0
     upside = ((p_justo / p_atual) - 1) * 100 if p_justo > 0 and p_atual > 0 else 0.0
-    # Filtro desativado temporariamente para evitar que as ações sumam
-    # if not busca_direta and filtros_ativos:
-    # if not (pl <= f_pl and pvp <= f_pvp and dy >= f_dy and div_e <= f_div_ebitda):
-    # return None
     # Notícias
     noticias_texto = ""
     lista_links = []
@@ -353,6 +357,17 @@ with st.sidebar.expander("📌 Impacto no Mercado", expanded=True):
     st.markdown(f"**Último Focus ({macro['Focus_Data']})**")
     st.markdown(f"- Selic 2026: **{macro['Focus_Selic_2026']}**")
 st.sidebar.divider()
+
+# ===================== NOVO: PASSO 3 - ALERTAS TELEGRAM =====================
+with st.sidebar.expander("🔔 Alertas Telegram (Passo 3)", expanded=False):
+    bot_token = st.text_input("Bot Token (Telegram)", type="password", help="Crie um bot no @BotFather")
+    chat_id = st.text_input("Chat ID", help="Seu ID ou ID do canal/grupo")
+    if st.button("✅ Ativar Alertas Telegram"):
+        st.session_state.telegram_ativado = True
+        st.success("Alertas ativados!")
+    if st.session_state.telegram_ativado:
+        st.caption("✅ Alertas Telegram ativados")
+
 mercado_selecionado = st.sidebar.radio("Mercado:", ["Brasil", "EUA"], on_change=ativar_filtros)
 estrategia_ativa = st.sidebar.selectbox(
     "Estratégia:",
@@ -368,6 +383,7 @@ with st.sidebar.expander("📊 Filtros de Valuation", expanded=True):
 if st.sidebar.button("Resetar Filtros"):
     st.session_state.filtros_ativos = False
     st.rerun()
+
 # ===================== LISTA DE ATIVOS =====================
 if mercado_selecionado == "Brasil":
     lista_base = ["PETR4", "VALE3", "ITUB4", "BBAS3", "BBDC4", "SANB11", "B3SA3", "EGIE3", "TRPL4", "TAEE11", "WEGE3", "PRIO3", "JBSS3"]
@@ -375,11 +391,14 @@ if mercado_selecionado == "Brasil":
 else:
     lista_base = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA"]
     moeda_simbolo = "US$"
+
 # ===================== CABEÇALHO =====================
 st.title(f"🤖 Monitor IA - {mercado_selecionado}")
 st.caption(f"Atualização: {time.strftime('%H:%M:%S')} | Local: Blumenau/SC")
+
 # ===================== TABS =====================
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "📈 Gráfico Técnico", "📉 Fundamentalista", "📜 Backtest"])
+
 # ===================== PROCESSAMENTO =====================
 tickers_para_processar = [busca_direta] if busca_direta else lista_base
 dados_vencedoras = []
@@ -395,6 +414,20 @@ if tickers_para_processar:
         )
         if resultado:
             dados_vencedoras.append(resultado)
+
+# ===================== ALERTAS TELEGRAM (Passo 3) =====================
+if st.session_state.telegram_ativado and bot_token and chat_id:
+    for acao in dados_vencedoras:
+        sinal_key = f"{acao['Ticker']}_{acao['Veredito']}"
+        if sinal_key not in st.session_state.ultimos_alertas and ("COMPRA" in acao["Veredito"] or "VENDA" in acao["Veredito"] or "FORTE" in acao["Veredito"]):
+            mensagem = f"🚨 SINAL IA\n\n{acao['Ticker']} - {acao['Veredito']}\nPreço: {moeda_simbolo} {acao['Preço']:.2f}\nMotivo: {acao['Motivo']}\n\n📊 Value Score: {acao.get('ValueScore', 0)}/4"
+            try:
+                requests.get(f"https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={chat_id}&text={mensagem}")
+                st.session_state.ultimos_alertas.add(sinal_key)
+                st.toast(f"✅ Alerta enviado: {acao['Ticker']}", icon="🔔")
+            except:
+                pass
+
 # ===================== TAB 1 - OVERVIEW =====================
 with tab1:
     if dados_vencedoras:
@@ -417,64 +450,39 @@ with tab1:
         )
     else:
         st.info("Nenhum ativo encontrado com os filtros atuais.")
-# ===================== TAB 2 - GRÁFICO TÉCNICO (MELHORADO) =====================
+
+# ===================== TAB 2 - GRÁFICO TÉCNICO =====================
 with tab2:
     st.subheader("📈 Gráfico Técnico")
     if dados_vencedoras:
         for acao in dados_vencedoras:
             hist = acao["Hist"].copy()
             if hist.empty:
-                st.warning(f"Sem dados históricos para {acao['Ticker']}")
                 continue
-
-            # Indicadores técnicos
             hist['SMA20'] = hist['Close'].rolling(window=20).mean()
             hist['SMA200'] = hist['Close'].rolling(window=200).mean()
             hist['BB_Mid'] = hist['Close'].rolling(window=20).mean()
             hist['BB_Std'] = hist['Close'].rolling(window=20).std()
-            hist['BB_Upper'] = hist['BB_Mid'] + (2 * hist['BB_Std'])
-            hist['BB_Lower'] = hist['BB_Mid'] - (2 * hist['BB_Std'])
+            hist['BB_Upper'] = hist['BB_Mid'] + 2 * hist['BB_Std']
+            hist['BB_Lower'] = hist['BB_Mid'] - 2 * hist['BB_Std']
             rsi_series = calcular_rsi_series(hist['Close'])
-
-            # Gráfico profissional
-            fig = make_subplots(
-                rows=3, cols=1,
-                shared_xaxes=True,
-                vertical_spacing=0.08,
-                row_heights=[0.65, 0.20, 0.15],
-                subplot_titles=(f"{acao['Ticker']} - Candlestick + Bollinger + SMAs", "Volume", "RSI (14)")
-            )
-
-            # Candlestick + Bandas + SMAs
-            fig.add_trace(go.Candlestick(
-                x=hist.index, open=hist['Open'], high=hist['High'],
-                low=hist['Low'], close=hist['Close'], name="Preço"
-            ), row=1, col=1)
+            fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.65, 0.20, 0.15],
+                                subplot_titles=(f"{acao['Ticker']} - Candlestick + Bollinger + SMAs", "Volume", "RSI (14)"))
+            fig.add_trace(go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close'], name="Preço"), row=1, col=1)
             fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA20'], name="SMA 20", line=dict(color="yellow", width=1.5)), row=1, col=1)
             fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA200'], name="SMA 200", line=dict(color="orange", width=1.5)), row=1, col=1)
             fig.add_trace(go.Scatter(x=hist.index, y=hist['BB_Upper'], name="Bollinger Upper", line=dict(color="rgba(0,255,0,0.5)")), row=1, col=1)
             fig.add_trace(go.Scatter(x=hist.index, y=hist['BB_Lower'], name="Bollinger Lower", line=dict(color="rgba(255,0,0,0.5)")), row=1, col=1)
-
-            # Volume
             fig.add_trace(go.Bar(x=hist.index, y=hist['Volume'], name="Volume", marker_color="rgba(128,128,128,0.6)"), row=2, col=1)
-
-            # RSI
             fig.add_trace(go.Scatter(x=hist.index, y=rsi_series, name="RSI", line=dict(color="purple", width=1.5)), row=3, col=1)
             fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
             fig.add_hline(y=30, line_dash="dash", line_color="lime", row=3, col=1)
-
-            fig.update_layout(
-                height=750,
-                template="plotly_dark",
-                showlegend=True,
-                title_text=f"Análise Técnica Detalhada - {acao['Empresa']} ({acao['Ticker']})",
-                xaxis_rangeslider_visible=False
-            )
-
+            fig.update_layout(height=750, template="plotly_dark", showlegend=True, title_text=f"Análise Técnica Detalhada - {acao['Empresa']} ({acao['Ticker']})", xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True, key=f"chart_tecnico_{acao['Ticker']}")
             st.divider()
     else:
         st.info("Use a busca direta ou aguarde o carregamento dos ativos.")
+
 # ===================== TAB 3 - FUNDAMENTALISTA =====================
 with tab3:
     st.subheader("📉 Análise Fundamentalista")
@@ -499,6 +507,7 @@ with tab3:
             st.divider()
     else:
         st.info("Nenhum ativo encontrado.")
+
 # ===================== TAB 4 - BACKTEST =====================
 with tab4:
     st.subheader("📜 Backtest & Estatísticas")
@@ -516,5 +525,6 @@ with tab4:
         )
     else:
         st.info("Execute uma análise para ver estatísticas de backtest.")
+
 # ===================== FIM =====================
 st.info("💡 Use os filtros ou faça uma busca direta para começar.")
