@@ -193,7 +193,7 @@ def simular_performance_historica(hist: pd.DataFrame) -> Dict:
         return resultado_padrao
 
 # ===================== MACROECONÔMICOS =====================
-@st.cache_data(ttl=300, show_spinner=False)  # Reduzido de 1800 para dados mais atualizados
+@st.cache_data(ttl=300, show_spinner=False)
 def obter_macro() -> Dict:
     """Obtém dados macroeconômicos com fallback"""
     macro = {}
@@ -204,23 +204,23 @@ def obter_macro() -> Dict:
             macro["Selic"] = float(selic_data["Close"].iloc[-1])
         else:
             macro["Selic"] = 14.75
-    except (ConnectionError, Exception) as e:
+    except Exception as e:
         logger.warning(f"Erro ao buscar Selic: {e}")
         macro["Selic"] = 14.75
     
     try:
         macro["Dolar"] = float(yf.Ticker("USDBRL=X").fast_info.last_price)
-    except (ConnectionError, Exception) as e:
+    except Exception as e:
         logger.warning(f"Erro ao buscar Dólar: {e}")
         macro["Dolar"] = 4.99
     
     try:
-        macro["IPCA_12m"] = 4.14  # Dados estáticos por enquanto
+        macro["IPCA_12m"] = 4.14
     except Exception as e:
         logger.warning(f"Erro ao buscar IPCA: {e}")
         macro["IPCA_12m"] = 4.14
     
-    # Dados do Focus (atualizados manualmente ou via API externa)
+    # Dados do Focus
     macro["Focus_Data"] = "17/04/2026"
     macro["Focus_Selic_2026"] = "12.50%"
     macro["Focus_IPCA_2026"] = "4.36%"
@@ -228,74 +228,51 @@ def obter_macro() -> Dict:
     
     return macro
 
-# ===================== CACHE DE MERCADO =====================
+# ===================== CACHE DE MERCADO - CORRIGIDO =====================
 @st.cache_data(ttl=300, show_spinner=False)
 def obter_indices() -> Dict[str, Tuple[float, float]]:
-    """Obtém índices mundiais com tratamento de erro"""
+    """Obtém índices mundiais com tratamento de erro - VOLTADO PARA INDIVIDUAL"""
     indices = {"Ibovespa": "^BVSP", "Nasdaq": "^IXIC", "Dow Jones": "^DJI"}
     resultados = {}
     
-    try:
-        # Usar batch download ao invés de múltiplas chamadas
-        tickers_list = list(indices.values())
-        dados = yf.download(tickers_list, period="2d", progress=False, threads=True)
-        
-        for nome, ticker in indices.items():
-            try:
-                if len(indices) == 1:
-                    data = dados
-                else:
-                    data = dados[ticker] if ticker in dados.columns else pd.DataFrame()
-                
-                if not data.empty and len(data) >= 2:
-                    atual = float(data["Close"].iloc[-1])
-                    anterior = float(data["Close"].iloc[-2])
-                    variacao = ((atual / anterior) - 1) * 100
-                    resultados[nome] = (atual, variacao)
-                else:
-                    resultados[nome] = (0.0, 0.0)
-            except (KeyError, IndexError, ValueError):
+    for nome, ticker in indices.items():
+        try:
+            data = yf.Ticker(ticker).history(period="2d")
+            if not data.empty and len(data) >= 2:
+                atual = float(data["Close"].iloc[-1])
+                anterior = float(data["Close"].iloc[-2])
+                variacao = ((atual / anterior) - 1) * 100
+                resultados[nome] = (atual, variacao)
+            else:
                 resultados[nome] = (0.0, 0.0)
-    
-    except (ConnectionError, Exception) as e:
-        logger.warning(f"Erro ao buscar índices: {e}")
-        resultados = {nome: (0.0, 0.0) for nome in indices.keys()}
+        except Exception as e:
+            logger.warning(f"Erro ao buscar {nome}: {e}")
+            resultados[nome] = (0.0, 0.0)
     
     return resultados
 
 @st.cache_data(ttl=90, show_spinner=False)
 def obter_cambio() -> Dict[str, Tuple[float, float]]:
-    """Obtém câmbio em tempo real com fallback"""
+    """Obtém câmbio em tempo real com fallback - VOLTADO PARA INDIVIDUAL"""
     moedas = {"Dólar": "USDBRL=X", "Euro": "EURBRL=X", "Libra": "GBPBRL=X"}
     resultados = {}
     
-    try:
-        # Usar batch download
-        tickers_list = list(moedas.values())
-        dados = yf.download(tickers_list, period="2d", progress=False, threads=True)
-        
-        for nome, ticker in moedas.items():
-            try:
-                if len(moedas) == 1:
-                    data = dados
-                else:
-                    data = dados[ticker] if ticker in dados.columns else pd.DataFrame()
-                
-                if not data.empty and len(data) >= 2:
-                    atual = float(data["Close"].iloc[-1])
-                    anterior = float(data["Close"].iloc[-2])
-                    variacao = ((atual / anterior) - 1) * 100
-                else:
-                    atual = float(yf.Ticker(ticker).fast_info.last_price)
-                    variacao = 0.0
-                
-                resultados[nome] = (atual, variacao)
-            except (ValueError, KeyError, IndexError):
-                resultados[nome] = (0.0, 0.0)
-    
-    except (ConnectionError, Exception) as e:
-        logger.warning(f"Erro ao buscar câmbio: {e}")
-        resultados = {k: (0.0, 0.0) for k in moedas.keys()}
+    for nome, ticker in moedas.items():
+        try:
+            t = yf.Ticker(ticker)
+            data = t.history(period="2d")
+            if not data.empty and len(data) >= 2:
+                atual = float(data["Close"].iloc[-1])
+                anterior = float(data["Close"].iloc[-2])
+                variacao = ((atual / anterior) - 1) * 100
+            else:
+                atual = float(t.fast_info.last_price)
+                variacao = 0.0
+            
+            resultados[nome] = (atual, variacao)
+        except Exception as e:
+            logger.warning(f"Erro ao buscar {nome}: {e}")
+            resultados[nome] = (0.0, 0.0)
     
     # ===================== BITCOIN EM REAL =====================
     btc_real = 0.0
@@ -310,7 +287,7 @@ def obter_cambio() -> Dict[str, Tuple[float, float]]:
         
         if atual > 100000:
             btc_real = atual
-    except (ConnectionError, Exception) as e:
+    except Exception as e:
         logger.warning(f"Erro ao buscar BTC-BRL: {e}")
     
     # Fallback: calcular via BTC-USD
@@ -320,7 +297,7 @@ def obter_cambio() -> Dict[str, Tuple[float, float]]:
             dolar_brl = resultados.get("Dólar", (4.99, 0))[0]
             if dolar_brl > 0:
                 btc_real = btc_usd * dolar_brl
-        except (ConnectionError, Exception) as e:
+        except Exception as e:
             logger.warning(f"Erro ao calcular BTC em reais: {e}")
     
     resultados["Bitcoin"] = (btc_real, 0.0)
@@ -365,16 +342,18 @@ def obter_dados_batch(tickers: list, mercado: str) -> Tuple[Dict, Dict]:
                     hist_dict[t_orig] = hist_multi
                 else:
                     # Verificar se tem MultiIndex
-                    if hasattr(hist_multi, 'columns') and hasattr(hist_multi.columns, 'get_level_values'):
-                        try:
-                            if t_yf in hist_multi.columns.get_level_values(0):
-                                hist_dict[t_orig] = hist_multi[t_yf]
-                            else:
-                                hist_dict[t_orig] = pd.DataFrame()
-                        except (KeyError, AttributeError):
+                    try:
+                        if t_yf in hist_multi.columns.get_level_values(0):
+                            hist_dict[t_orig] = hist_multi[t_yf]
+                        else:
                             hist_dict[t_orig] = pd.DataFrame()
-                    else:
-                        hist_dict[t_orig] = hist_multi if t_yf in hist_multi.columns else pd.DataFrame()
+                    except (KeyError, AttributeError):
+                        # Sem MultiIndex, tenta acesso direto
+                        if t_yf in hist_multi.columns:
+                            hist_dict[t_orig] = hist_multi[[t_yf]]
+                            hist_dict[t_orig].columns = ["Close"]
+                        else:
+                            hist_dict[t_orig] = pd.DataFrame()
             
             except Exception as e:
                 logger.warning(f"Erro ao processar {t_yf}: {e}")
@@ -658,13 +637,7 @@ if tickers_para_processar:
     with st.spinner("📡 Baixando dados em batch..."):
         infos, hists = obter_dados_batch(tickers_para_processar, mercado_selecionado)
     
-    progresso_total = len(tickers_para_processar)
-    progresso = st.progress(0)
-    status_text = st.empty()
-    
-    for idx, tkr in enumerate(tickers_para_processar):
-        status_text.text(f"Processando {idx + 1}/{progresso_total}: {tkr}")
-        
+    for tkr in tickers_para_processar:
         info = infos.get(tkr, {})
         hist = hists.get(tkr, pd.DataFrame())
         
@@ -675,11 +648,6 @@ if tickers_para_processar:
         
         if resultado:
             dados_vencedoras.append(resultado)
-        
-        progresso.progress((idx + 1) / progresso_total)
-    
-    progresso.empty()
-    status_text.empty()
 
 # ===================== INTERFACE =====================
 if dados_vencedoras:
@@ -690,7 +658,7 @@ if dados_vencedoras:
         * **VALOR ✅**: Grande desconto + bons fundamentos (Value Investing)
         * **COMPRA ✅**: RSI saudável + notícias positivas (Análise Técnica)
         * **VENDA / CARO 🚨**: RSI extremo ou preço acima do justo  
-        * **CAUTELA ��️**: Divergência entre preço, RSI e sentimento  
+        * **CAUTELA ⚠️**: Divergência entre preço, RSI e sentimento  
         * **Win Rate**: Porcentagem de operações rentáveis
         * **Expectancy**: Ganho esperado por operação (quanto maior, melhor)
         """)
@@ -728,6 +696,7 @@ if dados_vencedoras:
         else:
             col_ver.warning(f"**{acao['Veredito']}**")
         
+        # Gráfico corrigido
         st.line_chart(acao["Hist"]["Close"], use_container_width=True)
         
         c1, c2, c3, c4, c5 = st.columns(5)
