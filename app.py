@@ -1,4 +1,3 @@
-# ===================== IMPORTS =====================
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -9,218 +8,148 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from streamlit_autorefresh import st_autorefresh
 
-# ===================== CONFIG =====================
-st.set_page_config(page_title="Monitor IA Pro", layout="wide")
-st_autorefresh(interval=300 * 1000, key="data_refresh")
+# ================= CONFIG =================
+st.set_page_config(page_title="Monitor IA Hedge Fund", layout="wide")
+st_autorefresh(interval=300 * 1000, key="refresh")
 
-if "filtros_ativos" not in st.session_state:
-    st.session_state.filtros_ativos = False
+# ================= INDICADORES COMPLETOS =================
+def add_indicators(df):
 
-def ativar_filtros():
-    st.session_state.filtros_ativos = True
+    # ===== MÉDIAS =====
+    df["SMA50"] = df["Close"].rolling(50).mean()
+    df["SMA200"] = df["Close"].rolling(200).mean()
+    df["EMA9"] = df["Close"].ewm(span=9).mean()
+    df["EMA21"] = df["Close"].ewm(span=21).mean()
 
-# ===================== FUNÇÕES BASE =====================
-def calcular_graham(lpa, vpa):
-    if lpa > 0 and vpa > 0:
-        return np.sqrt(22.5 * lpa * vpa)
-    return 0.0
+    # ===== RSI =====
+    delta = df["Close"].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    rs = gain.rolling(14).mean() / loss.rolling(14).mean()
+    df["RSI"] = 100 - (100 / (1 + rs))
 
-def calcular_rsi_series(close, window=14):
-    if len(close) < window:
-        return pd.Series([50.0]*len(close), index=close.index)
+    # ===== MACD =====
+    exp12 = df["Close"].ewm(span=12).mean()
+    exp26 = df["Close"].ewm(span=26).mean()
+    df["MACD"] = exp12 - exp26
+    df["MACD_signal"] = df["MACD"].ewm(span=9).mean()
+    df["MACD_hist"] = df["MACD"] - df["MACD_signal"]
 
-    delta = close.diff()
-    gain = delta.clip(lower=0).rolling(window).mean()
-    loss = -delta.clip(upper=0).rolling(window).mean()
+    # ===== BOLLINGER =====
+    df["BB_mid"] = df["Close"].rolling(20).mean()
+    std = df["Close"].rolling(20).std()
+    df["BB_up"] = df["BB_mid"] + 2 * std
+    df["BB_low"] = df["BB_mid"] - 2 * std
 
-    loss = loss.replace(0, np.nan)
-    rs = gain / loss
-    rsi = 100 - (100/(1+rs))
+    # ===== VWAP =====
+    df["VWAP"] = (df["Volume"] * (df["High"] + df["Low"] + df["Close"]) / 3).cumsum() / df["Volume"].cumsum()
 
-    return rsi.fillna(50)
+    # ===== OBV =====
+    df["OBV"] = (np.sign(df["Close"].diff()) * df["Volume"]).fillna(0).cumsum()
 
-def calcular_rsi(data):
-    return float(calcular_rsi_series(data).iloc[-1])
+    # ===== ATR =====
+    tr = np.maximum(df["High"] - df["Low"],
+                    np.maximum(abs(df["High"] - df["Close"].shift()),
+                               abs(df["Low"] - df["Close"].shift())))
+    df["ATR"] = tr.rolling(14).mean()
 
-def calcular_score_value(info):
-    score = 0
-    if 0 < info.get("trailingPE", 99) < 15: score += 1
-    if 0 < info.get("priceToBook", 99) < 1.5: score += 1
-    if (info.get("dividendYield", 0) or 0) * 100 > 5: score += 1
-    if (info.get("operatingMargins", 0) or 0) > 0.1: score += 1
-    return score
+    # ===== ESTOCÁSTICO =====
+    low_min = df["Low"].rolling(14).min()
+    high_max = df["High"].rolling(14).max()
+    df["STOCH"] = 100 * (df["Close"] - low_min) / (high_max - low_min)
 
-# ===================== SIMULAÇÃO =====================
-def simular_performance_historica(hist):
-    if len(hist) < 300:
-        return dict.fromkeys([
-            "taxa_compra","taxa_venda","retorno_medio_compra",
-            "retorno_medio_venda","expectancy_compra",
-            "expectancy_venda","qtd_compra","qtd_venda"
-        ],0)
+    # ===== ICHIMOKU =====
+    df["tenkan"] = (df["High"].rolling(9).max() + df["Low"].rolling(9).min()) / 2
+    df["kijun"] = (df["High"].rolling(26).max() + df["Low"].rolling(26).min()) / 2
 
-    close = hist["Close"]
-    rsi = calcular_rsi_series(close)
-    sma200 = close.rolling(200).mean()
+    # ===== FIBONACCI =====
+    high = df["High"].max()
+    low = df["Low"].min()
+    df["FIB_0"] = low
+    df["FIB_38"] = low + (high - low) * 0.382
+    df["FIB_61"] = low + (high - low) * 0.618
+    df["FIB_100"] = high
 
-    exp12 = close.ewm(span=12).mean()
-    exp26 = close.ewm(span=26).mean()
-    macd = exp12-exp26
-    sinal = macd.ewm(span=9).mean()
+    return df
 
-    ret = close.shift(-15)/close -1
+# ================= DOWNLOAD =================
+@st.cache_data(ttl=300)
+def get_data(ticker):
+    df = yf.download(ticker, period="2y")
+    return df
 
-    buy = (rsi<35)&(close>sma200)&(macd>sinal)&ret.notna()
-    sell = (rsi>70)&((close<sma200)|(macd<sinal))&ret.notna()
+# ================= GRÁFICO PROFISSIONAL =================
+def plot_chart(df):
 
-    def calc(mask, positive=True):
-        if not mask.any():
-            return 0,0,0,0
-        r = ret[mask]
-        taxa = (r>0).mean() if positive else (r<0).mean()
-        avg_win = r[r>0].mean() if (r>0).any() else 0
-        avg_loss = abs(r[r<0].mean()) if (r<0).any() else 0
-        exp = (taxa*avg_win) - ((1-taxa)*avg_loss)
-        return taxa*100, r.mean()*100, exp*100, int(mask.sum())
+    fig = make_subplots(
+        rows=4, cols=1,
+        shared_xaxes=True,
+        row_heights=[0.5, 0.15, 0.15, 0.2]
+    )
 
-    tc, rm_c, exp_c, qc = calc(buy, True)
-    tv, rm_v, exp_v, qv = calc(sell, False)
-
-    return {
-        "taxa_compra":tc,"taxa_venda":tv,
-        "retorno_medio_compra":rm_c,
-        "retorno_medio_venda":rm_v,
-        "expectancy_compra":exp_c,
-        "expectancy_venda":exp_v,
-        "qtd_compra":qc,"qtd_venda":qv
-    }
-
-# ===================== DADOS =====================
-@st.cache_data(ttl=600)
-def obter_dados_batch(tickers, mercado):
-    tickers_yf = [t+".SA" if mercado=="Brasil" and not t.endswith(".SA") else t for t in tickers]
-    hist_multi = yf.download(tickers_yf, period="5y", group_by="ticker", threads=True)
-
-    info_dict, hist_dict = {}, {}
-
-    for i,t in enumerate(tickers):
-        t_yf = tickers_yf[i]
-        tk = yf.Ticker(t_yf)
-
-        try:
-            info = tk.fast_info
-            info_dict[t] = {
-                "lastPrice": info.get("last_price"),
-                "marketCap": info.get("market_cap"),
-                **tk.info
-            }
-        except:
-            info_dict[t] = {}
-
-        try:
-            if isinstance(hist_multi.columns, pd.MultiIndex):
-                hist_dict[t] = hist_multi[t_yf].copy()
-            else:
-                hist_dict[t] = hist_multi.copy()
-        except:
-            hist_dict[t] = pd.DataFrame()
-
-    return info_dict, hist_dict
-
-# ===================== PROCESSAMENTO =====================
-def processar_ativo(tkr, info, hist, estrategia):
-    if hist.empty or not info:
-        return None
-
-    hist = hist.copy()
-    hist["SMA20"] = hist["Close"].rolling(20).mean()
-
-    p = float(hist["Close"].iloc[-1])
-    rsi = calcular_rsi(hist["Close"])
-    score = calcular_score_value(info)
-    sim = simular_performance_historica(hist)
-
-    veredito = "NEUTRO ⚖️"
-    cor = "warning"
-
-    if estrategia == "Análise Técnica (Trader)":
-        if rsi > 70:
-            veredito, cor = "VENDA 🚨", "error"
-        elif rsi < 30:
-            veredito, cor = "COMPRA ✅", "success"
-
-    return {
-        "Ticker":tkr,
-        "Preço":p,
-        "RSI":rsi,
-        "Hist":hist,
-        "Veredito":veredito,
-        "Cor":cor,
-        "TaxaCompra":sim["taxa_compra"],
-        "TaxaVenda":sim["taxa_venda"]
-    }
-
-# ===================== UI =====================
-st.title("🤖 Monitor IA PRO")
-
-mercado = st.sidebar.radio("Mercado",["Brasil","EUA"])
-estrategia = st.sidebar.selectbox("Estratégia",[
-    "Análise Técnica (Trader)",
-    "Value Investing (Graham/Buffett)",
-    "Growth Investing",
-    "Buy and Hold",
-    "Dividend Investing",
-    "Position Trading"
-])
-
-busca = st.sidebar.text_input("Buscar").upper()
-
-lista = ["PETR4","VALE3","ITUB4"] if mercado=="Brasil" else ["AAPL","MSFT","NVDA"]
-
-tickers = [busca] if busca else lista
-
-dados = []
-infos, hists = obter_dados_batch(tickers, mercado)
-
-for t in tickers:
-    r = processar_ativo(t, infos.get(t,{}), hists.get(t,pd.DataFrame()), estrategia)
-    if r:
-        dados.append(r)
-
-# ===================== EXIBIÇÃO =====================
-for acao in dados:
-    st.divider()
-
-    st.subheader(f"{acao['Ticker']} - {acao['Veredito']}")
-
-    hist = acao["Hist"]
-
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True)
-
+    # ===== CANDLE =====
     fig.add_trace(go.Candlestick(
-        x=hist.index,
-        open=hist["Open"],
-        high=hist["High"],
-        low=hist["Low"],
-        close=hist["Close"]
-    ),row=1,col=1)
+        x=df.index,
+        open=df["Open"],
+        high=df["High"],
+        low=df["Low"],
+        close=df["Close"]
+    ), row=1, col=1)
 
-    fig.add_trace(go.Scatter(
-        x=hist.index,
-        y=hist["SMA20"],
-        name="SMA20"
-    ),row=1,col=1)
+    # MÉDIAS + VWAP
+    fig.add_trace(go.Scatter(x=df.index, y=df["EMA9"], name="EMA9"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df["EMA21"], name="EMA21"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df["SMA200"], name="SMA200"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df["VWAP"], name="VWAP"), row=1, col=1)
 
-    fig.add_trace(go.Bar(
-        x=hist.index,
-        y=hist["Volume"]
-    ),row=2,col=1)
+    # BOLLINGER
+    fig.add_trace(go.Scatter(x=df.index, y=df["BB_up"], name="BB Up"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df["BB_low"], name="BB Low"), row=1, col=1)
 
-    fig.update_layout(height=500)
+    # ===== RSI =====
+    fig.add_trace(go.Scatter(x=df.index, y=df["RSI"], name="RSI"), row=2, col=1)
 
-    st.plotly_chart(fig, use_container_width=True)
+    # ===== MACD =====
+    fig.add_trace(go.Bar(x=df.index, y=df["MACD_hist"]), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df["MACD"]), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df["MACD_signal"]), row=3, col=1)
 
-    c1,c2,c3 = st.columns(3)
-    c1.metric("Preço",f"{acao['Preço']:.2f}")
-    c2.metric("RSI",f"{acao['RSI']:.1f}")
-    c3.metric("Win Rate",f"{acao['TaxaCompra']:.1f}%")
+    # ===== VOLUME =====
+    fig.add_trace(go.Bar(x=df.index, y=df["Volume"]), row=4, col=1)
+
+    fig.update_layout(height=900, template="plotly_dark")
+    return fig
+
+# ================= APP =================
+st.title("🔥 Monitor Trader - Nível Hedge Fund")
+
+ticker = st.text_input("Ativo", "PETR4.SA")
+
+if ticker:
+    df = get_data(ticker)
+
+    if not df.empty:
+        df = add_indicators(df)
+
+        fig = plot_chart(df)
+        st.plotly_chart(fig, use_container_width=True)
+
+        # ===== SINAIS =====
+        last = df.iloc[-1]
+
+        st.subheader("📊 Leitura Inteligente")
+
+        if last["RSI"] < 30 and last["MACD"] > last["MACD_signal"]:
+            st.success("COMPRA FORTE")
+        elif last["RSI"] > 70:
+            st.error("VENDA FORTE")
+        else:
+            st.warning("NEUTRO")
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("RSI", round(last["RSI"], 2))
+        col2.metric("ATR", round(last["ATR"], 2))
+        col3.metric("OBV", int(last["OBV"]))
+
+    else:
+        st.error("Erro ao carregar dados")
