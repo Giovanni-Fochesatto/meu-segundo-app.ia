@@ -4,9 +4,13 @@ import pandas as pd
 import numpy as np
 import time
 import feedparser
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from streamlit_autorefresh import st_autorefresh
 
+# ===================== CONFIGURAÇÕES =====================
 st.set_page_config(page_title="Monitor IA Pro", layout="wide")
-st_autorefresh(interval=300 * 1000, key="data_refresh")
+st_autorefresh(interval=300000, key="data_refresh")   # <--- Corrigido aqui
 
 if "filtros_ativos" not in st.session_state:
     st.session_state.filtros_ativos = False
@@ -14,7 +18,27 @@ if "filtros_ativos" not in st.session_state:
 def ativar_filtros():
     st.session_state.filtros_ativos = True
 
-# ===================== FUNÇÕES =====================
+# ===================== FUNÇÕES TÉCNICAS =====================
+def calcular_graham(lpa, vpa):
+    if lpa > 0 and vpa > 0:
+        return np.sqrt(22.5 * lpa * vpa)
+    return 0.0
+
+def calcular_rsi_series(close: pd.Series, window: int = 14) -> pd.Series:
+    if len(close) < window:
+        return pd.Series([50.0] * len(close), index=close.index)
+    delta = close.diff()
+    gain = delta.where(delta > 0, 0).rolling(window=window).mean()
+    loss = -delta.where(delta < 0, 0).rolling(window=window).mean()
+    rs = gain / loss.where(loss != 0, np.nan)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.fillna(50)
+
+def calcular_rsi(data, window: int = 14):
+    if len(data) < window:
+        return 50.0
+    return float(calcular_rsi_series(data, window).iloc[-1])
+
 def calcular_score_value(info):
     score = 0
     criteria = []
@@ -32,6 +56,24 @@ def calcular_score_value(info):
         criteria.append("Margem boa")
     return score, criteria
 
+# ===================== SIMULAÇÃO =====================
+def simular_performance_historica(hist, min_volume=50000):
+    if len(hist) < 100:
+        return {"expectancy_compra": 0.0, "sharpe_compra": 0.0, "qtd_compra": 0}
+    close = hist["Close"].copy() if "Close" in hist.columns else hist.iloc[:, -1]
+    retorno_15d = close.shift(-15) / close - 1
+    buy_mask = retorno_15d.notna()
+    if buy_mask.any():
+        ret_buy = retorno_15d[buy_mask]
+        expectancy = ret_buy.mean() * 100
+        sharpe = ret_buy.mean() / ret_buy.std() * np.sqrt(252) if ret_buy.std() != 0 else 0
+        qtd = int(buy_mask.sum())
+    else:
+        expectancy = sharpe = 0.0
+        qtd = 0
+    return {"expectancy_compra": expectancy, "sharpe_compra": sharpe, "qtd_compra": qtd}
+
+# ===================== CACHE =====================
 @st.cache_data(ttl=600)
 def obter_dados_batch(tickers, mercado):
     if not tickers:
@@ -45,10 +87,7 @@ def obter_dados_batch(tickers, mercado):
         try:
             info_dict[t_orig] = yf.Ticker(t_yf).info
             if isinstance(hist_multi.columns, pd.MultiIndex):
-                if t_yf in hist_multi.columns.get_level_values(0):
-                    hist_dict[t_orig] = hist_multi[t_yf]
-                else:
-                    hist_dict[t_orig] = pd.DataFrame()
+                hist_dict[t_orig] = hist_multi[t_yf] if t_yf in hist_multi.columns.get_level_values(0) else pd.DataFrame()
             else:
                 hist_dict[t_orig] = hist_multi
         except:
@@ -56,6 +95,7 @@ def obter_dados_batch(tickers, mercado):
             hist_dict[t_orig] = pd.DataFrame()
     return info_dict, hist_dict
 
+# ===================== PROCESSAMENTO =====================
 def processar_ativo(tkr, info, hist):
     if hist.empty or not info:
         return None
@@ -73,7 +113,6 @@ def processar_ativo(tkr, info, hist):
     score_value, criteria = calcular_score_value(info)
 
     veredito = "NEUTRO ⚖️" if score_value < 3 else "VALOR ✅"
-    motivo = f"Value Score: {score_value}/4"
 
     return {
         "Ticker": tkr,
@@ -82,10 +121,9 @@ def processar_ativo(tkr, info, hist):
         "P/L": round(pl, 2),
         "DY %": round(dy, 2),
         "Veredito": veredito,
-        "Motivo": motivo,
         "ValueScore": score_value,
         "ValueCriteria": criteria,
-        "Links": []  
+        "Links": []
     }
 
 # ===================== INTERFACE =====================
@@ -116,11 +154,7 @@ with tab1:
     if dados_vencedoras:
         st.subheader("🏆 Ranking")
         df = pd.DataFrame(dados_vencedoras)
-        st.dataframe(
-            df[["Ticker", "Preço", "DY %", "Veredito", "Motivo"]],
-            use_container_width=True,
-            hide_index=True
-        )
+        st.dataframe(df[["Ticker", "Preço", "DY %", "Veredito"]], use_container_width=True, hide_index=True)
     else:
         st.info("Nenhum ativo encontrado. Digite PETR4 na busca rápida.")
 
