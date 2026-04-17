@@ -469,7 +469,7 @@ with tab2:
     else:
         st.info("Nenhum ativo para exibir no gráfico.")
 
-# ===================== TAB 3 - FUNDAMENTALISTA (Value Score corrigido) =====================
+# ===================== TAB 3 - FUNDAMENTALISTA =====================
 with tab3:
     st.subheader("📉 Análise Fundamentalista")
     if dados_vencedoras:
@@ -480,33 +480,52 @@ with tab3:
             col2.metric("P/VP", round(acao.get("P/VP", 0), 2))
             col3.metric("DY", f"{acao['DY %']:.2f}%")
             st.metric("Dívida Líquida / EBITDA", round(acao["Dívida"], 2))
-            
             # Value Score destacado
-            score = acao.get("ValueScore", 0)
+            score = acao["ValueScore"]
             st.markdown(f"**Value Score: {score}/4**")
             st.progress(score / 4)
             st.divider()
     else:
         st.info("Nenhum ativo encontrado.")
 
-# ===================== TAB 4 - BACKTEST =====================
+# ===================== TAB 4 - BACKTEST OTIMIZADA =====================
 with tab4:
     st.subheader("📜 Backtest & Estatísticas")
+    
     if dados_vencedoras:
         df = pd.DataFrame(dados_vencedoras)
+        
+        # Estatísticas agregadas
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Ativos Analisados", len(df))
-        col2.metric("Média Expectancy", f"{df['ExpectancyCompra'].mean():.2f}%")
+        col2.metric("Média Expectancy Compra", f"{df['ExpectancyCompra'].mean():.2f}%")
         col3.metric("Média Sharpe", f"{df['SharpeCompra'].mean():.2f}")
-        col4.metric("Total Sinais Compra", int(df['QtdCompra'].sum()))
+        col4.metric("Total Sinais de Compra", int(df['QtdCompra'].sum()))
 
+        # Melhor e Pior Ativo
+        melhor = df.loc[df['ExpectancyCompra'].idxmax()] if not df.empty else None
+        pior = df.loc[df['ExpectancyCompra'].idxmin()] if not df.empty else None
+        
+        if melhor is not None:
+            st.success(f"**Melhor Ativo:** {melhor['Ticker']} → Expectancy {melhor['ExpectancyCompra']:.2f}%")
+        if pior is not None:
+            st.error(f"**Pior Ativo:** {pior['Ticker']} → Expectancy {pior['ExpectancyCompra']:.2f}%")
+
+        # Tabela detalhada
+        st.markdown("### Detalhes por Ativo")
         st.dataframe(
-            df[["Ticker", "ExpectancyCompra", "SharpeCompra", "QtdCompra"]].round(2),
+            df[["Ticker", "ExpectancyCompra", "SharpeCompra", "MaxDrawdown", "QtdCompra"]].round(2),
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            column_config={
+                "ExpectancyCompra": st.column_config.NumberColumn("Expectancy %", format="%.2f"),
+                "SharpeCompra": st.column_config.NumberColumn("Sharpe", format="%.2f"),
+                "MaxDrawdown": st.column_config.NumberColumn("Max Drawdown %", format="%.2f"),
+                "QtdCompra": st.column_config.NumberColumn("Sinais Compra"),
+            }
         )
     else:
-        st.info("Execute uma análise para ver estatísticas de backtest.")
+        st.info("💡 Execute uma análise com ativos para ver o Backtest completo.")
 
 # ===================== FIM =====================
 st.info("💡 Use os filtros ou faça uma busca direta para começar.")
