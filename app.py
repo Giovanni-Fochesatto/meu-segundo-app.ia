@@ -12,7 +12,6 @@ from typing import Dict, Tuple, Optional
 st.set_page_config(page_title="Monitor IA Pro", layout="wide")
 st_autorefresh(interval=300 * 1000, key="data_refresh")
 
-# Configurar logging
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
@@ -38,10 +37,7 @@ def validar_serie(series: pd.Series, min_length: int = 14) -> bool:
 
 # ===================== FUNÇÕES TÉCNICAS =====================
 def calcular_graham(lpa: float, vpa: float) -> float:
-    """
-    Calcula o preço justo usando a fórmula de Graham.
-    Retorna NaN se os dados forem inválidos.
-    """
+    """Calcula o preço justo usando a fórmula de Graham"""
     try:
         if pd.isna(lpa) or pd.isna(vpa) or lpa <= 0 or vpa <= 0:
             return np.nan
@@ -60,12 +56,8 @@ def calcular_rsi_series(close: pd.Series, window: int = 14) -> pd.Series:
         delta = close.diff()
         gain = delta.where(delta > 0, 0).rolling(window=window).mean()
         loss = -delta.where(delta < 0, 0).rolling(window=window).mean()
-        
-        # Proteção contra divisão por zero
         rs = gain / (loss + 1e-10)
         rsi = 100 - (100 / (1 + rs))
-        
-        # Substituir infinitos e NaN por 50 (neutro)
         rsi = rsi.replace([np.inf, -np.inf], 50.0).fillna(50.0)
         
         return rsi
@@ -82,11 +74,10 @@ def calcular_rsi(data: pd.Series, window: int = 14) -> float:
         rsi_series = calcular_rsi_series(data, window)
         ultimo_rsi = float(rsi_series.iloc[-1])
         
-        # Validar se é um número válido
         if pd.isna(ultimo_rsi) or np.isinf(ultimo_rsi):
             return 50.0
         
-        return min(100.0, max(0.0, ultimo_rsi))  # Limitar entre 0 e 100
+        return min(100.0, max(0.0, ultimo_rsi))
     except Exception as e:
         logger.warning(f"Erro ao calcular RSI: {e}")
         return 50.0
@@ -127,12 +118,11 @@ def simular_performance_historica(hist: pd.DataFrame) -> Dict:
     }
     
     try:
-        if hist.empty or len(hist) < 300:
+        if hist.empty or len(hist) < 300 or "Close" not in hist.columns:
             return resultado_padrao
         
         close = hist["Close"].copy()
         
-        # Calcular indicadores
         rsi = calcular_rsi_series(close)
         sma200 = close.rolling(window=200).mean()
         exp12 = close.ewm(span=12, adjust=False).mean()
@@ -141,7 +131,6 @@ def simular_performance_historica(hist: pd.DataFrame) -> Dict:
         sinal_macd = macd.ewm(span=9, adjust=False).mean()
         retorno_15d = close.shift(-15) / close - 1
         
-        # Criar máscaras
         buy_mask = (rsi < 35) & (close > sma200) & (macd > sinal_macd) & retorno_15d.notna()
         sell_mask = (rsi > 70) & ((close < sma200) | (macd < sinal_macd)) & retorno_15d.notna()
         
@@ -158,7 +147,6 @@ def simular_performance_historica(hist: pd.DataFrame) -> Dict:
             avg_win = ret_buy[ret_buy > 0].mean() if (ret_buy > 0).any() else 0.0
             avg_loss = abs(ret_buy[ret_buy < 0].mean()) if (ret_buy < 0).any() else 0.0
             
-            # Corrigir a fórmula de expectancy
             exp_c = ((taxa_c / 100) * avg_win - (1 - taxa_c / 100) * avg_loss) * 100
         
         # ===================== VENDAS =====================
@@ -174,7 +162,6 @@ def simular_performance_historica(hist: pd.DataFrame) -> Dict:
             avg_win_v = abs(ret_sell[ret_sell < 0].mean()) if (ret_sell < 0).any() else 0.0
             avg_loss_v = ret_sell[ret_sell > 0].mean() if (ret_sell > 0).any() else 0.0
             
-            # Corrigir a fórmula de expectancy
             exp_v = ((taxa_v / 100) * avg_win_v - (1 - taxa_v / 100) * avg_loss_v) * 100
         
         return {
@@ -220,7 +207,6 @@ def obter_macro() -> Dict:
         logger.warning(f"Erro ao buscar IPCA: {e}")
         macro["IPCA_12m"] = 4.14
     
-    # Dados do Focus
     macro["Focus_Data"] = "17/04/2026"
     macro["Focus_Selic_2026"] = "12.50%"
     macro["Focus_IPCA_2026"] = "4.36%"
@@ -228,10 +214,10 @@ def obter_macro() -> Dict:
     
     return macro
 
-# ===================== CACHE DE MERCADO - CORRIGIDO =====================
+# ===================== CACHE DE MERCADO =====================
 @st.cache_data(ttl=300, show_spinner=False)
 def obter_indices() -> Dict[str, Tuple[float, float]]:
-    """Obtém índices mundiais com tratamento de erro - VOLTADO PARA INDIVIDUAL"""
+    """Obtém índices mundiais - INDIVIDUAL CALLS"""
     indices = {"Ibovespa": "^BVSP", "Nasdaq": "^IXIC", "Dow Jones": "^DJI"}
     resultados = {}
     
@@ -253,7 +239,7 @@ def obter_indices() -> Dict[str, Tuple[float, float]]:
 
 @st.cache_data(ttl=90, show_spinner=False)
 def obter_cambio() -> Dict[str, Tuple[float, float]]:
-    """Obtém câmbio em tempo real com fallback - VOLTADO PARA INDIVIDUAL"""
+    """Obtém câmbio em tempo real - INDIVIDUAL CALLS"""
     moedas = {"Dólar": "USDBRL=X", "Euro": "EURBRL=X", "Libra": "GBPBRL=X"}
     resultados = {}
     
@@ -290,7 +276,6 @@ def obter_cambio() -> Dict[str, Tuple[float, float]]:
     except Exception as e:
         logger.warning(f"Erro ao buscar BTC-BRL: {e}")
     
-    # Fallback: calcular via BTC-USD
     if btc_real < 100000:
         try:
             btc_usd = float(yf.Ticker("BTC-USD").fast_info.last_price)
@@ -306,7 +291,7 @@ def obter_cambio() -> Dict[str, Tuple[float, float]]:
 # ===================== DOWNLOAD EM BATCH =====================
 @st.cache_data(ttl=600, show_spinner=False)
 def obter_dados_batch(tickers: list, mercado: str) -> Tuple[Dict, Dict]:
-    """Obtém dados de múltiplos tickers com tratamento de erro robusto"""
+    """Obtém dados de múltiplos tickers"""
     info_dict = {}
     hist_dict = {}
     
@@ -314,13 +299,11 @@ def obter_dados_batch(tickers: list, mercado: str) -> Tuple[Dict, Dict]:
         return info_dict, hist_dict
     
     try:
-        # Adicionar sufixo .SA para Brasil
         tickers_yf = [
             t + ".SA" if mercado == "Brasil" and not t.endswith(".SA") else t 
             for t in tickers
         ]
         
-        # Download em batch
         hist_multi = yf.download(
             tickers_yf, 
             period="5y", 
@@ -334,23 +317,19 @@ def obter_dados_batch(tickers: list, mercado: str) -> Tuple[Dict, Dict]:
             t_yf = tickers_yf[i]
             
             try:
-                # Obter info
                 info_dict[t_orig] = yf.Ticker(t_yf).info
                 
-                # Obter histórico com tratamento de MultiIndex
                 if len(tickers) == 1:
                     hist_dict[t_orig] = hist_multi
                 else:
-                    # Verificar se tem MultiIndex
                     try:
                         if t_yf in hist_multi.columns.get_level_values(0):
                             hist_dict[t_orig] = hist_multi[t_yf]
                         else:
                             hist_dict[t_orig] = pd.DataFrame()
                     except (KeyError, AttributeError):
-                        # Sem MultiIndex, tenta acesso direto
                         if t_yf in hist_multi.columns:
-                            hist_dict[t_orig] = hist_multi[[t_yf]]
+                            hist_dict[t_orig] = hist_multi[[t_yf]].copy()
                             hist_dict[t_orig].columns = ["Close"]
                         else:
                             hist_dict[t_orig] = pd.DataFrame()
@@ -379,14 +358,12 @@ def processar_ativo(
     busca_direta: str,
     mercado: str
 ) -> Optional[Dict]:
-    """Processa um ativo individual com validação robusta"""
+    """Processa um ativo individual"""
     
     try:
-        # Validações iniciais
         if hist.empty or not info or "Close" not in hist.columns:
             return None
         
-        # Extrair valores com proteção
         pl = info.get("trailingPE") or 0
         if pd.isna(pl):
             pl = 0
@@ -429,10 +406,20 @@ def processar_ativo(
         else:
             upside = ((p_justo / p_atual) - 1) * 100 if p_atual > 0 else 0.0
         
-        # Aplicar filtros
+        # ✅ APLICAR FILTROS CORRETAMENTE
         if not busca_direta and filtros_ativos:
-            if not (pl <= f_pl and pvp <= f_pvp and dy >= f_dy and div_e <= f_div_ebitda):
+            # Usar valores seguros para comparação
+            if pl > 0:
+                if not (pl <= f_pl):
+                    return None
+            if pvp > 0:
+                if not (pvp <= f_pvp):
+                    return None
+            if not (dy >= f_dy):
                 return None
+            if div_e < 999:
+                if not (div_e <= f_div_ebitda):
+                    return None
         
         # ===================== NOTÍCIAS =====================
         noticias_texto = ""
@@ -453,7 +440,6 @@ def processar_ativo(
         score_p = sum(noticias_texto.count(w) for w in ["alta", "lucro", "compra", "subiu", "dividend", "profit", "buy"])
         score_n = sum(noticias_texto.count(w) for w in ["queda", "prejuízo", "venda", "caiu", "risk", "loss", "sell"])
         
-        # ===================== INDICADORES =====================
         rsi_val = calcular_rsi(hist["Close"])
         score_value = calcular_score_value(info)
         sim = simular_performance_historica(hist)
@@ -470,7 +456,7 @@ def processar_ativo(
                 veredito, cor = "NEUTRO ⚖️", "warning"
                 motivo_detalhe = "Ativo próximo ao preço justo."
         
-        else:  # Análise Técnica + Notícias
+        else:
             if rsi_val > 70 and score_n > score_p:
                 veredito, cor = "VENDA 🚨", "error"
                 motivo_detalhe = f"RSI alto ({rsi_val:.1f}) e notícias negativas."
@@ -607,7 +593,7 @@ estrategia_ativa = st.sidebar.selectbox(
 
 busca_direta = st.sidebar.text_input(f"🔍 Busca Rápida ({mercado_selecionado}):").upper().strip()
 
-with st.sidebar.expander("📊 Filtros de Valuation", expanded=True):
+with st.sidebar.expander("📊 Filtros de Valuation", expanded=False):
     f_pl = st.slider("P/L Máximo", 0.0, 50.0, 50.0, step=0.5, on_change=ativar_filtros)
     f_pvp = st.slider("P/VP Máximo", 0.0, 10.0, 10.0, step=0.1, on_change=ativar_filtros)
     f_dy = st.slider("DY Mínimo (%)", 0.0, 20.0, 0.0, step=0.5, on_change=ativar_filtros)
@@ -696,7 +682,6 @@ if dados_vencedoras:
         else:
             col_ver.warning(f"**{acao['Veredito']}**")
         
-        # Gráfico corrigido
         st.line_chart(acao["Hist"]["Close"], use_container_width=True)
         
         c1, c2, c3, c4, c5 = st.columns(5)
@@ -728,6 +713,6 @@ else:
     if busca_direta:
         st.warning(f"⚠️ Nenhum resultado encontrado para '{busca_direta}'. Verifique o ticker.")
     elif st.session_state.filtros_ativos:
-        st.info("💡 Nenhum ativo atende aos critérios de filtro. Ajuste os valores.")
+        st.info("💡 Nenhum ativo atende aos critérios de filtro. Ajuste os valores para valores menores (P/L, P/VP, Dívida) ou maiores (DY).")
     else:
-        st.info("💡 Use os filtros ou faça uma busca direta para começar.")
+        st.info("💡 Clique nos filtros para filtrar ativos ou faça uma busca direta digitando um ticker.")
