@@ -28,7 +28,7 @@ def calcular_rsi_series(close: pd.Series, window: int = 14) -> pd.Series:
     delta = close.diff()
     gain = delta.where(delta > 0, 0).rolling(window=window).mean()
     loss = -delta.where(delta < 0, 0).rolling(window=window).mean()
-    rs = gain / (loss + 1e-10)  # FIX: Divisão por zero
+    rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
@@ -36,10 +36,7 @@ def calcular_rsi(data, window: int = 14):
     if len(data) < window:
         return 50.0
     rsi_series = calcular_rsi_series(data, window)
-    rsi_val = float(rsi_series.iloc[-1])
-    if pd.isna(rsi_val) or np.isinf(rsi_val):  # FIX: NaN handling
-        return 50.0
-    return rsi_val
+    return float(rsi_series.iloc[-1])
 
 def calcular_score_value(info):
     score = 0
@@ -79,7 +76,7 @@ def simular_performance_historica(hist):
         ret_med_c = ret_buy.mean() * 100
         avg_win = ret_buy[ret_buy > 0].mean() if (ret_buy > 0).any() else 0
         avg_loss = abs(ret_buy[ret_buy < 0].mean()) if (ret_buy < 0).any() else 0
-        exp_c = ((taxa_c/100 * avg_win) - ((1 - taxa_c/100) * avg_loss)) * 100  # FIX: Parênteses
+        exp_c = (taxa_c/100 * avg_win) - ((1 - taxa_c/100) * avg_loss) * 100
     else:
         taxa_c = ret_med_c = exp_c = 0.0
         qtd_c = 0
@@ -92,7 +89,7 @@ def simular_performance_historica(hist):
         ret_med_v = ret_sell.mean() * 100
         avg_win_v = abs(ret_sell[ret_sell < 0].mean()) if (ret_sell < 0).any() else 0
         avg_loss_v = ret_sell[ret_sell > 0].mean() if (ret_sell > 0).any() else 0
-        exp_v = ((taxa_v/100 * avg_win_v) - ((1 - taxa_v/100) * avg_loss_v)) * 100
+        exp_v = (taxa_v/100 * avg_win_v) - ((1 - taxa_v/100) * avg_loss_v) * 100
     else:
         taxa_v = ret_med_v = exp_v = 0.0
         qtd_v = 0
@@ -117,7 +114,7 @@ def obter_macro():
         macro["Selic"] = float(selic_data["Close"].iloc[-1]) if not selic_data.empty else 14.75
         macro["Dolar"] = yf.Ticker("USDBRL=X").fast_info.last_price
         macro["IPCA_12m"] = 4.14
-    except Exception:  # FIX: Specific exception
+    except:
         macro["Selic"] = 14.75
         macro["Dolar"] = 4.99
         macro["IPCA_12m"] = 4.14
@@ -144,7 +141,7 @@ def obter_indices():
                 resultados[nome] = (atual, variacao)
             else:
                 resultados[nome] = (0.0, 0.0)
-        except Exception:  # FIX: Specific exception
+        except:
             resultados[nome] = (0.0, 0.0)
     return resultados
 
@@ -165,7 +162,7 @@ def obter_cambio():
                 atual = float(t.fast_info.last_price)
                 variacao = 0.0
             resultados[nome] = (atual, variacao)
-        except Exception:  # FIX: Specific exception
+        except:
             resultados[nome] = (0.0, 0.0)
 
     # Bitcoin em Real
@@ -176,14 +173,14 @@ def obter_cambio():
         atual = float(data["Close"].iloc[-1]) if not data.empty and len(data) >= 2 else float(t.fast_info.last_price)
         if atual > 100000:
             btc_real = atual
-    except Exception:
+    except:
         pass
     if btc_real < 100000:
         try:
             btc_usd = float(yf.Ticker("BTC-USD").fast_info.last_price)
             dolar_brl = resultados.get("Dólar", (4.99, 0))[0]
             btc_real = btc_usd * dolar_brl
-        except Exception:
+        except:
             pass
     resultados["Bitcoin"] = (btc_real, 0.0)
     return resultados
@@ -205,12 +202,8 @@ def obter_dados_batch(tickers, mercado):
             if len(tickers) == 1:
                 hist_dict[t_orig] = hist_multi
             else:
-                # FIX: Tratamento correto de MultiIndex
-                try:
-                    hist_dict[t_orig] = hist_multi[t_yf]
-                except (KeyError, TypeError):
-                    hist_dict[t_orig] = pd.DataFrame()
-        except Exception:  # FIX: Specific exception
+                hist_dict[t_orig] = hist_multi[t_yf] if t_yf in hist_multi.columns.get_level_values(0) else pd.DataFrame()
+        except Exception:
             info_dict[t_orig] = {}
             hist_dict[t_orig] = pd.DataFrame()
     return info_dict, hist_dict
@@ -251,7 +244,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
             titulo = entry.title.lower()
             noticias_texto += titulo + " "
             lista_links.append({"titulo": entry.title, "link": entry.link})
-    except Exception:
+    except:
         pass
 
     score_p = sum(noticias_texto.count(w) for w in ["alta", "lucro", "compra", "subiu", "dividend", "profit", "buy"])
@@ -325,7 +318,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
             veredito, cor = "LATERAL ⚖️", "warning"
             motivo_detalhe = "Ativo cruzando médias, sem tendência direcional confirmada."
 
-    else:  # Análise Técnica (Trader)
+    else: # Análise Técnica (Trader)
         if rsi_val > 70 and score_n > score_p:
             veredito, cor = "VENDA 🚨", "error"
             motivo_detalhe = f"RSI alto ({rsi_val:.1f}) e notícias negativas."
@@ -555,7 +548,7 @@ if dados_vencedoras:
         c1.metric("Preço Atual", f"{moeda_simbolo} {acao['Preço']:.2f}")
         c2.metric("P/L", round(acao["P/L"], 2))
         c3.metric("DY", f"{acao['DY %']:.2f}%")
-        c4.metric("D��v.Líq/EBITDA", round(acao["Dívida"], 2))
+        c4.metric("Dív.Líq/EBITDA", round(acao["Dívida"], 2))
         c5.metric("Graham", f"{moeda_simbolo} {acao['Graham']:.2f}", f"{acao['Upside %']:.1f}%")
 
         with st.expander(f"📊 Detalhes: {acao['Ticker']}"):
