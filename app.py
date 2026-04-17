@@ -255,7 +255,6 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
 
     sim = simular_performance_historica(hist)
 
-    # ===================== LÓGICA DE ESTRATÉGIAS MULTIPLAS =====================
     if estrategia_ativa == "Value Investing (Graham/Buffett)":
         if upside > 20 and score_value >= 3:
             veredito, cor = "VALOR ✅", "success"
@@ -266,59 +265,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
         else:
             veredito, cor = "NEUTRO ⚖️", "warning"
             motivo_detalhe = "Ativo próximo ao preço justo."
-
-    elif estrategia_ativa == "Dividend Investing":
-        if dy >= 6.0 and div_e < 3.0:
-            veredito, cor = "RENDA ✅", "success"
-            motivo_detalhe = f"Alto Dividend Yield ({dy:.2f}%) e dívida controlada ({div_e:.1f}x)."
-        elif dy < 3.0:
-            veredito, cor = "BAIXO DY 🚨", "error"
-            motivo_detalhe = f"Dividend Yield fraco para a estratégia ({dy:.2f}%)."
-        else:
-            veredito, cor = "NEUTRO ⚖️", "warning"
-            motivo_detalhe = f"DY mediano ({dy:.2f}%), monitorar a consistência."
-
-    elif estrategia_ativa == "Growth Investing":
-        rev_growth = (info.get("revenueGrowth", 0) or 0) * 100
-        if rev_growth > 15.0:
-            veredito, cor = "CRESCIMENTO ✅", "success"
-            motivo_detalhe = f"Forte aceleração de receita ({rev_growth:.1f}%) ano a ano."
-        elif rev_growth < 0:
-            veredito, cor = "DECLÍNIO 🚨", "error"
-            motivo_detalhe = "Empresa apresentando retração nas receitas operacionais."
-        else:
-            veredito, cor = "NEUTRO ⚖️", "warning"
-            motivo_detalhe = f"Crescimento de receita brando ou estagnado ({rev_growth:.1f}%)."
-
-    elif estrategia_ativa == "Buy and Hold":
-        if score_value >= 3 and div_e < 2.5 and pl < 25:
-            veredito, cor = "ACUMULAR ✅", "success"
-            motivo_detalhe = "Excelentes fundamentos de longo prazo e baixo risco de endividamento."
-        elif div_e > 5.0 or pl > 50:
-            veredito, cor = "RISCO 🚨", "error"
-            motivo_detalhe = "Múltiplos esticados ou endividamento excessivo para carrego longo."
-        else:
-            veredito, cor = "MANTER ⚖️", "warning"
-            motivo_detalhe = "Fundamentos dentro da média, sem sinais de alerta graves."
-
-    elif estrategia_ativa == "Position Trading":
-        try:
-            sma200_atual = hist["Close"].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else 0
-            sma50_atual = hist["Close"].rolling(window=50).mean().iloc[-1] if len(hist) >= 50 else 0
-        except:
-            sma200_atual, sma50_atual = 0, 0
-            
-        if p_atual > sma50_atual and sma50_atual > sma200_atual:
-            veredito, cor = "TENDÊNCIA ALTA ✅", "success"
-            motivo_detalhe = "Preço suportado acima das médias móveis de 50 e 200 dias (Uptrend)."
-        elif p_atual < sma50_atual and sma50_atual < sma200_atual:
-            veredito, cor = "TENDÊNCIA BAIXA 🚨", "error"
-            motivo_detalhe = "Preço abaixo das principais médias móveis (Downtrend)."
-        else:
-            veredito, cor = "LATERAL ⚖️", "warning"
-            motivo_detalhe = "Ativo cruzando médias, sem tendência direcional confirmada."
-
-    else: # Análise Técnica (Trader)
+    else:
         if rsi_val > 70 and score_n > score_p:
             veredito, cor = "VENDA 🚨", "error"
             motivo_detalhe = f"RSI alto ({rsi_val:.1f}) e notícias negativas."
@@ -336,7 +283,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
             motivo_detalhe = " | ".join(lista_motivos)
         else:
             veredito, cor = "NEUTRO ⚖️", "warning"
-            motivo_detalhe = "Indicadores em equilíbrio no curto prazo."
+            motivo_detalhe = "Indicadores em equilíbrio."
 
     return {
         "Ticker": tkr,
@@ -442,16 +389,8 @@ mercado_selecionado = st.sidebar.radio(
     "Escolha o Mercado:", ["Brasil", "EUA"], on_change=ativar_filtros
 )
 
-# Adicionado as opções de Análise pedidas!
 estrategia_ativa = st.sidebar.selectbox(
-    "Foco da Análise:", [
-        "Value Investing (Graham/Buffett)",
-        "Análise Técnica (Trader)",
-        "Growth Investing",
-        "Buy and Hold",
-        "Dividend Investing",
-        "Position Trading"
-    ]
+    "Foco da Análise:", ["Análise Técnica + Notícias", "Value Investing (Graham/Buffett)"]
 )
 
 busca_direta = st.sidebar.text_input(f"🔍 Busca Rápida ({mercado_selecionado}):").upper().strip()
