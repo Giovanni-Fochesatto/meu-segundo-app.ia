@@ -42,8 +42,10 @@ def init_db():
     conn.commit()
     conn.close()
 
+# Chama no início para garantir que a tabela existe
+init_db()
+
 def salvar_sinal(acao):
-    init_db()
     conn = sqlite3.connect('sinais_ia.db')
     c = conn.cursor()
     agora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -441,7 +443,7 @@ if tickers_para_processar:
         )
         if resultado:
             dados_vencedoras.append(resultado)
-            salvar_sinal(resultado)   # ← Passo 4: salva no banco
+            salvar_sinal(resultado)   # Salva no banco
 
 # ===================== TAB 1 - OVERVIEW =====================
 with tab1:
@@ -466,7 +468,7 @@ with tab1:
     else:
         st.info("Nenhum ativo encontrado com os filtros atuais.")
 
-# ===================== TAB 2 - GRÁFICO TÉCNICO (melhorado) =====================
+# ===================== TAB 2 - GRÁFICO TÉCNICO =====================
 with tab2:
     st.subheader("📈 Gráfico Técnico")
     if dados_vencedoras:
@@ -523,7 +525,7 @@ with tab3:
     else:
         st.info("Nenhum ativo encontrado.")
 
-# ===================== TAB 4 - BACKTEST + PASSO 4 =====================
+# ===================== TAB 4 - BACKTEST =====================
 with tab4:
     st.subheader("📜 Backtest & Performance da IA")
     if dados_vencedoras:
@@ -543,15 +545,18 @@ with tab4:
 
     # === HISTÓRICO DO BANCO (Passo 4) ===
     st.subheader("📊 Histórico de Sinais Salvos")
-    conn = sqlite3.connect('sinais_ia.db')
-    df_historico = pd.read_sql("SELECT * FROM sinais ORDER BY data DESC", conn)
-    conn.close()
-    if not df_historico.empty:
-        st.dataframe(df_historico, use_container_width=True, hide_index=True)
-        if st.button("📤 Exportar Histórico para CSV"):
-            csv = df_historico.to_csv(index=False)
-            st.download_button("Baixar CSV", csv, "historico_sinais_ia.csv", "text/csv")
-    else:
-        st.info("Ainda não há sinais salvos.")
+    try:
+        conn = sqlite3.connect('sinais_ia.db')
+        df_historico = pd.read_sql("SELECT * FROM sinais ORDER BY data DESC", conn)
+        conn.close()
+        if not df_historico.empty:
+            st.dataframe(df_historico, use_container_width=True, hide_index=True)
+            if st.button("📤 Exportar Histórico para CSV"):
+                csv = df_historico.to_csv(index=False)
+                st.download_button("Baixar CSV", csv, "historico_sinais_ia.csv", "text/csv")
+        else:
+            st.info("Ainda não há sinais salvos. Faça uma busca para começar.")
+    except Exception as e:
+        st.info("Ainda não há sinais salvos. Faça uma busca para começar.")
 
 st.info("💡 Use os filtros ou faça uma busca direta para começar.")
