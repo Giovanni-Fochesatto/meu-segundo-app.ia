@@ -106,25 +106,19 @@ def simular_performance_historica(hist):
     }
 
 # ===================== MACROECONÔMICOS =====================
-@st.cache_data(ttl=1800, show_spinner=False)  # atualiza a cada 30 minutos
+@st.cache_data(ttl=1800, show_spinner=False)
 def obter_macro():
     macro = {}
     try:
-        # Selic
         selic_data = yf.Ticker("^SELIC").history(period="5d")
         macro["Selic"] = float(selic_data["Close"].iloc[-1]) if not selic_data.empty else 14.75
-
-        # Dólar
         macro["Dolar"] = yf.Ticker("USDBRL=X").fast_info.last_price
-
-        # IPCA (aproximação)
         macro["IPCA_12m"] = 4.14
     except:
         macro["Selic"] = 14.75
         macro["Dolar"] = 4.99
         macro["IPCA_12m"] = 4.14
 
-    # Relatório Focus (dados mais recentes)
     macro["Focus_Data"] = "13/04/2026"
     macro["Focus_Selic_2026"] = "12.50%"
     macro["Focus_IPCA_2026"] = "4.36%"
@@ -171,7 +165,7 @@ def obter_cambio():
         except:
             resultados[nome] = (0.0, 0.0)
 
-    # Bitcoin em Real
+    # Bitcoin
     btc_real = 0.0
     try:
         t = yf.Ticker("BTC-BRL")
@@ -358,6 +352,47 @@ with st.sidebar.expander("📌 Impacto no Mercado", expanded=True):
     st.markdown(f"- Selic 2026: **{macro['Focus_Selic_2026']}**")
     st.markdown(f"- IPCA 2026: **{macro['Focus_IPCA_2026']}**")
     st.markdown(f"- PIB 2026: **{macro['Focus_PIB_2026']}**")
+
+st.sidebar.divider()
+
+# ===================== ANÁLISE FUNDAMENTALISTA =====================
+st.sidebar.subheader("📉 Análise Fundamentalista")
+with st.sidebar.expander("Indicadores Chave", expanded=False):
+    st.markdown("""
+    **Eficiência e Rentabilidade:**
+    - **ROE**: Retorno sobre o Patrimônio
+    - **Margem Líquida**: Lucro Líquido / Receita
+    - **Margem EBITDA**: Eficiência operacional
+
+    **Valuation:**
+    - **P/L**: Preço sobre Lucro
+    - **P/VP**: Preço sobre Valor Patrimonial
+
+    **Endividamento:**
+    - **Dívida Líquida / EBITDA**: Alavancagem financeira
+    """)
+
+st.sidebar.divider()
+
+# ===================== GESTÃO DE RISCO =====================
+st.sidebar.subheader("🛡️ Gestão de Risco e Portfólio")
+with st.sidebar.expander("Estratégias Recomendadas", expanded=False):
+    st.markdown("""
+    - **Alocação de Ativos**: Rebalancear carteira conforme risco e valorização
+    - **Análise Técnica**: Definir pontos de entrada/saída com suporte e resistência
+    - **Gestão de Risco**: Stop-loss, diversificação e controle de exposição
+    """)
+
+st.sidebar.divider()
+
+# ===================== FERRAMENTAS =====================
+st.sidebar.subheader("🔧 Ferramentas e Fontes")
+st.sidebar.markdown("""
+- **Status Invest**  
+- **Investidor10**  
+- **TradingView**  
+- **Relatórios**: XP, BB, BTG, Itaú, Santander
+""")
 
 st.sidebar.divider()
 
