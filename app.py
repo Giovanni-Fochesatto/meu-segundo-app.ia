@@ -44,19 +44,19 @@ def calcular_score_value(info):
     criteria = []
     if 0 < info.get("trailingPE", 99) < 15:
         score += 1
-        criteria.append("P/L < 15")
+        criteria.append("P/L baixo")
     if 0 < info.get("priceToBook", 99) < 1.5:
         score += 1
-        criteria.append("P/VP < 1.5")
+        criteria.append("P/VP baixo")
     if (info.get("dividendYield", 0) or 0) * 100 > 5:
         score += 1
-        criteria.append("DY > 5%")
+        criteria.append("DY alto")
     if (info.get("operatingMargins", 0) or 0) > 0.1:
         score += 1
-        criteria.append("Margem Operacional > 10%")
+        criteria.append("Margem boa")
     return score, criteria
 
-# ===================== SIMULAÇÃO PROFISSIONAL (mantida igual) =====================
+# ===================== SIMULAÇÃO (mantida igual) =====================
 def simular_performance_historica(hist, min_volume=50000):
     if len(hist) < 300:
         return {
@@ -85,7 +85,6 @@ def simular_performance_historica(hist, min_volume=50000):
         (rsi > 70) & ((close < sma200) | (macd < sinal_macd)) &
         retorno_15d.notna() & liquid_mask
     )
-    # Compras
     if buy_mask.any():
         ret_buy = retorno_15d[buy_mask]
         qtd_c = int(buy_mask.sum())
@@ -103,7 +102,6 @@ def simular_performance_historica(hist, min_volume=50000):
     else:
         taxa_c = ret_med_c = expectancy_c = sharpe_c = sortino_c = 0.0
         qtd_c = 0
-    # Vendas (mantida)
     if sell_mask.any():
         ret_sell = retorno_15d[sell_mask]
         qtd_v = int(sell_mask.sum())
@@ -121,7 +119,6 @@ def simular_performance_historica(hist, min_volume=50000):
     else:
         taxa_v = ret_med_v = expectancy_v = sharpe_v = sortino_v = 0.0
         qtd_v = 0
-    # Max Drawdown
     if len(close) > 10:
         cum_ret = close.pct_change().cumsum()
         peak = cum_ret.cummax()
@@ -258,9 +255,10 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
     p_atual = float(hist["Close"].iloc[-1]) if not hist.empty else 0
     upside = ((p_justo / p_atual) - 1) * 100 if p_justo > 0 and p_atual > 0 else 0.0
 
+    # Removido filtro rigoroso para não sumir as ações
     if not busca_direta and filtros_ativos:
         if not (pl <= f_pl and pvp <= f_pvp and dy >= f_dy and div_e <= f_div_ebitda):
-            return None
+            pass  # apenas ignora o filtro se quiser forçar mostrar
 
     # Notícias
     noticias_texto = ""
@@ -425,7 +423,6 @@ with tab1:
     if dados_vencedoras:
         st.subheader(f"🏆 Ranking - Estratégia: {estrategia_ativa}")
         df_resumo = pd.DataFrame(dados_vencedoras)
-        # Removido filtro agressivo - mostra todas as ações processadas
         df_resumo = df_resumo[["Ticker", "Preço", "DY %", "Upside %", "Veredito", "Motivo",
                                "TaxaCompra", "ExpectancyCompra", "SharpeCompra", "QtdCompra"]]
         st.dataframe(
@@ -444,44 +441,6 @@ with tab1:
     else:
         st.info("Nenhum ativo encontrado com os filtros atuais.")
 
-# ===================== TAB 2 - GRÁFICO TÉCNICO =====================
-with tab2:
-    if dados_vencedoras:
-        for acao in dados_vencedoras:
-            st.subheader(f"{acao['Empresa']} ({acao['Ticker']}) - {acao['Veredito']}")
-            hist_df = acao["Hist"].copy()
-            hist_df['SMA20'] = hist_df['Close'].rolling(window=20).mean()
-            hist_df['STD20'] = hist_df['Close'].rolling(window=20).std()
-            hist_df['BB_Upper'] = hist_df['SMA20'] + (hist_df['STD20'] * 2)
-            hist_df['BB_Lower'] = hist_df['SMA20'] - (hist_df['STD20'] * 2)
-            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03,
-                                subplot_titles=("Candlestick + Bollinger Bands + SMA20", "Volume"))
-            fig.add_trace(go.Candlestick(
-                x=hist_df.index,
-                open=hist_df.get('Open', hist_df['Close']),
-                high=hist_df.get('High', hist_df['Close']),
-                low=hist_df.get('Low', hist_df['Close']),
-                close=hist_df['Close'],
-                name="Candlestick"
-            ), row=1, col=1)
-            fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['BB_Upper'],
-                                     line=dict(color='red', width=1), name='BB Upper'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['BB_Lower'],
-                                     line=dict(color='green', width=1), name='BB Lower'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['SMA20'],
-                                     line=dict(color='yellow', width=1.5), name='SMA 20'), row=1, col=1)
-            fig.add_trace(go.Bar(x=hist_df.index, y=hist_df.get('Volume', 0),
-                                 marker_color='rgba(100,100,100,0.6)', name='Volume'), row=2, col=1)
-            fig.update_layout(template="plotly_dark", height=600,
-                              xaxis_rangeslider_visible=False, showlegend=True)
-            st.plotly_chart(fig, use_container_width=True, key=f"chart_{acao['Ticker']}")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Preço Atual", f"{moeda_simbolo} {acao['Preço']:.2f}")
-            c2.metric("Expectancy", f"{acao.get('ExpectancyCompra', 0):.2f}%")
-            c3.metric("Sharpe", f"{acao.get('SharpeCompra', 0):.2f}")
-    else:
-        st.info("Nenhum ativo para exibir no gráfico.")
-
 # ===================== TAB 3 - FUNDAMENTALISTA =====================
 with tab3:
     st.subheader("📉 Análise Fundamentalista")
@@ -494,17 +453,14 @@ with tab3:
             col3.metric("DY", f"{acao['DY %']:.2f}%")
             st.metric("Dívida Líquida / EBITDA", round(acao["Dívida"], 2))
 
-            # Value Score detalhado
             score = acao.get("ValueScore", 0)
             criteria = acao.get("ValueCriteria", [])
             st.markdown(f"**Value Score: {score}/4**")
             st.progress(score / 4)
             if criteria:
                 st.caption("Critérios: " + " • ".join(criteria))
-            else:
-                st.caption("Nenhum critério atendido")
+            st.divider()
 
-            # Links das manchetes
             if acao.get("Links"):
                 st.markdown("**Últimas Manchetes:**")
                 for n in acao["Links"]:
