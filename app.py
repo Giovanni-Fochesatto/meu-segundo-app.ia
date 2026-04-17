@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 import time
 import feedparser
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from streamlit_autorefresh import st_autorefresh
 
 # ===================== CONFIGURAÇÕES =====================
@@ -165,7 +167,6 @@ def obter_cambio():
         except:
             resultados[nome] = (0.0, 0.0)
 
-    # Bitcoin em Real
     btc_real = 0.0
     try:
         t = yf.Ticker("BTC-BRL")
@@ -215,6 +216,9 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
     if hist.empty or not info:
         return None
 
+    # Cálculo da Média Móvel para assertividade no gráfico
+    hist['SMA20'] = hist['Close'].rolling(window=20).mean()
+
     pl = info.get("trailingPE", 0) or 0
     pvp = info.get("priceToBook", 0) or 0
     dy = (info.get("dividendYield", 0) or 0) * 100
@@ -252,10 +256,9 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
 
     rsi_val = calcular_rsi(hist["Close"])
     score_value = calcular_score_value(info)
-
     sim = simular_performance_historica(hist)
 
-    # ===================== LÓGICA DE ESTRATÉGIAS MULTIPLAS =====================
+    # Lógica de Estratégias
     if estrategia_ativa == "Value Investing (Graham/Buffett)":
         if upside > 20 and score_value >= 3:
             veredito, cor = "VALOR ✅", "success"
@@ -354,7 +357,6 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
         "Hist": hist,
         "Links": lista_links,
         "ValueScore": score_value,
-
         "TaxaCompra": sim["taxa_compra"],
         "TaxaVenda": sim["taxa_venda"],
         "RetornoMedioCompra": sim["retorno_medio_compra"],
@@ -385,75 +387,24 @@ col4.metric("Bitcoin", f"R$ {cambio['Bitcoin'][0]:,.0f}", f"{cambio['Bitcoin'][1
 
 st.sidebar.divider()
 
-# ===================== MACRO & CENÁRIO =====================
 st.sidebar.subheader("📊 Macro & Cenário")
 macro = obter_macro()
-
 st.sidebar.metric("Selic Atual", f"{macro['Selic']:.2f}%")
 st.sidebar.metric("IPCA 12m", f"{macro['IPCA_12m']:.2f}%")
 st.sidebar.metric("Dólar", f"R$ {macro['Dolar']:.2f}")
 
 with st.sidebar.expander("📌 Impacto no Mercado", expanded=True):
     st.markdown("""
-    **Selic Alta** → Prejudica ações de crescimento e empresas alavancadas  
-    **Inflação Controlada** → Melhora margens de lucro  
-    **Dólar Alto** → Beneficia exportadoras | Prejudica importadoras  
-    **PIB Crescente** → Favorece consumo, varejo e serviços
+    **Selic Alta** → Prejudica crescimento  
+    **Dólar Alto** → Favorece exportadoras
     """)
-    st.markdown(f"**Último Focus ({macro['Focus_Data']})**")
+    st.markdown(f"**Focus ({macro['Focus_Data']})**")
     st.markdown(f"- Selic 2026: **{macro['Focus_Selic_2026']}**")
-    st.markdown(f"- IPCA 2026: **{macro['Focus_IPCA_2026']}**")
-    st.markdown(f"- PIB 2026: **{macro['Focus_PIB_2026']}**")
 
 st.sidebar.divider()
 
-# ===================== ANÁLISE FUNDAMENTALISTA =====================
-st.sidebar.subheader("📉 Análise Fundamentalista")
-with st.sidebar.expander("Indicadores Chave", expanded=True):
-    st.markdown("""
-    **Eficiência e Rentabilidade:**
-    - **ROE** — Retorno sobre o Patrimônio
-    - **Margem Líquida** — Lucro Líquido / Receita
-    - **Margem EBITDA** — Eficiência operacional
-
-    **Valuation:**
-    - **P/L** — Preço sobre Lucro
-    - **P/VP** — Preço sobre Valor Patrimonial
-
-    **Endividamento:**
-    - **Dívida Líquida / EBITDA** — Nível de alavancagem
-    """)
-
-st.sidebar.divider()
-
-# ===================== GESTÃO DE RISCO =====================
-st.sidebar.subheader("🛡️ Gestão de Risco e Portfólio")
-with st.sidebar.expander("Estratégias Recomendadas", expanded=True):
-    st.markdown("""
-    - **Alocação de Ativos**: Rebalancear carteira conforme risco e valorização
-    - **Análise Técnica**: Definir pontos de entrada e saída com suporte/resistência
-    - **Gestão de Risco**: Stop-loss, diversificação e controle de exposição
-    """)
-
-st.sidebar.divider()
-
-# ===================== RESTO DO SIDEBAR =====================
-mercado_selecionado = st.sidebar.radio(
-    "Escolha o Mercado:", ["Brasil", "EUA"], on_change=ativar_filtros
-)
-
-# Adicionado as opções de Análise pedidas!
-estrategia_ativa = st.sidebar.selectbox(
-    "Foco da Análise:", [
-        "Value Investing (Graham/Buffett)",
-        "Análise Técnica (Trader)",
-        "Growth Investing",
-        "Buy and Hold",
-        "Dividend Investing",
-        "Position Trading"
-    ]
-)
-
+mercado_selecionado = st.sidebar.radio("Escolha o Mercado:", ["Brasil", "EUA"], on_change=ativar_filtros)
+estrategia_ativa = st.sidebar.selectbox("Foco da Análise:", ["Value Investing (Graham/Buffett)", "Análise Técnica (Trader)", "Growth Investing", "Buy and Hold", "Dividend Investing", "Position Trading"])
 busca_direta = st.sidebar.text_input(f"🔍 Busca Rápida ({mercado_selecionado}):").upper().strip()
 
 with st.sidebar.expander("📊 Filtros de Valuation", expanded=True):
@@ -468,10 +419,10 @@ if st.sidebar.button("Resetar Filtros"):
 
 # ===================== LISTA DE ATIVOS =====================
 if mercado_selecionado == "Brasil":
-    lista_base = ["PETR4", "VALE3", "ITUB4", "BBAS3", "BBDC4", "SANB11", "B3SA3", "EGIE3", "TRPL4", "TAEE11", "SAPR11", "CPLE6", "ELET3", "CMIG4", "SBSP3", "ABEV3", "WEGE3", "RADL3", "RENT3", "MGLU3", "LREN3", "RAIZ4", "VBBR3", "SUZB3", "KLBN11", "GOAU4", "CSNA3", "PRIO3", "JBSS3", "BRFS3", "GGBR4", "HAPV3", "RDOR3"]
+    lista_base = ["PETR4", "VALE3", "ITUB4", "BBAS3", "BBDC4", "SANB11", "B3SA3", "EGIE3", "TRPL4", "TAEE11", "SAPR11", "CPLE6", "WEGE3", "PRIO3", "JBSS3"]
     moeda_simbolo = "R$"
 else:
-    lista_base = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "NFLX", "DIS", "KO", "PEP", "MCD", "NKE", "WMT", "JPM", "V", "MA", "BAC", "PYPL", "PFE", "JNJ", "PG", "COST", "ORCL"]
+    lista_base = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "NFLX", "DIS", "KO"]
     moeda_simbolo = "US$"
 
 # ===================== CABEÇALHO =====================
@@ -489,60 +440,60 @@ if tickers_para_processar:
     for tkr in tickers_para_processar:
         info = infos.get(tkr, {})
         hist = hists.get(tkr, pd.DataFrame())
-        resultado = processar_ativo(
-            tkr, info, hist, estrategia_ativa, st.session_state.filtros_ativos,
-            f_pl, f_pvp, f_dy, f_div_ebitda, busca_direta, mercado_selecionado
-        )
-        if resultado:
-            dados_vencedoras.append(resultado)
+        resultado = processar_ativo(tkr, info, hist, estrategia_ativa, st.session_state.filtros_ativos, f_pl, f_pvp, f_dy, f_div_ebitda, busca_direta, mercado_selecionado)
+        if resultado: dados_vencedoras.append(resultado)
 
-# ===================== INTERFACE =====================
+# ===================== INTERFACE COM VELAS (CANDLESTICK) =====================
 if dados_vencedoras:
-    st.subheader(f"🏆 Ranking de Oportunidades - Estratégia: {estrategia_ativa}")
+    st.subheader(f"🏆 Ranking - Estratégia: {estrategia_ativa}")
     
-    with st.expander("📌 Legenda de Sinais e Vereditos"):
-        st.markdown("""
-        * **VALOR ✅**: Grande desconto + bons fundamentos  
-        * **COMPRA ✅**: RSI saudável + notícias positivas  
-        * **VENDA / CARO 🚨**: RSI extremo ou preço acima do justo  
-        * **CAUTELA ⚠️**: Divergência entre preço, RSI e sentimento  
-        * **Expectancy**: Ganho esperado por operação (quanto maior, melhor)
-        """)
-
-    df_resumo = pd.DataFrame(dados_vencedoras)[
-        ["Ticker", "Preço", "DY %", "Upside %", "Veredito", "Motivo", 
-         "TaxaCompra", "ExpectancyCompra", "QtdCompra"]
-    ]
-
-    st.dataframe(
-        df_resumo.sort_values(by="Upside %", ascending=False),
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Veredito": st.column_config.TextColumn("Veredito"),
-            "Motivo": st.column_config.TextColumn("Motivo da IA", width="medium"),
-            "TaxaCompra": st.column_config.NumberColumn("Win Rate Compra", format="%.1f%%"),
-            "ExpectancyCompra": st.column_config.NumberColumn("Expectancy Compra", format="%.2f%%"),
-            "QtdCompra": st.column_config.NumberColumn("Sinais"),
-        },
-    )
+    df_resumo = pd.DataFrame(dados_vencedoras)[["Ticker", "Preço", "DY %", "Upside %", "Veredito", "Motivo"]]
+    st.dataframe(df_resumo.sort_values(by="Upside %", ascending=False), use_container_width=True, hide_index=True)
 
     for acao in dados_vencedoras:
         st.divider()
         col_tit, col_ver, col_acc_c, col_acc_v = st.columns([3, 1, 1, 1])
         col_tit.header(f"🏢 {acao['Empresa']} ({acao['Ticker']})")
+        col_acc_c.metric("Assert. Compra", f"{acao['TaxaCompra']:.1f}%")
+        col_acc_v.metric("Assert. Venda", f"{acao['TaxaVenda']:.1f}%")
+
+        if acao["Cor"] == "success": col_ver.success(f"**{acao['Veredito']}**")
+        elif acao["Cor"] == "error": col_ver.error(f"**{acao['Veredito']}**")
+        else: col_ver.warning(f"**{acao['Veredito']}**")
+
+        # --- NOVO SISTEMA DE GRÁFICOS (VELAS + MÉDIA + VOLUME) ---
+        hist_df = acao["Hist"]
         
-        col_acc_c.metric("Assert. Compra", f"{acao['TaxaCompra']:.1f}%", f"{acao['QtdCompra']} sinais")
-        col_acc_v.metric("Assert. Venda", f"{acao['TaxaVenda']:.1f}%", f"{acao['QtdVenda']} sinais")
+        # Criar subplots: linha principal para o preço e linha secundária para o volume
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
+                           vertical_spacing=0.03, subplot_titles=(f'Velas e Média Móvel (20d)', 'Volume'), 
+                           row_width=[0.2, 0.7])
 
-        if acao["Cor"] == "success":
-            col_ver.success(f"**{acao['Veredito']}**")
-        elif acao["Cor"] == "error":
-            col_ver.error(f"**{acao['Veredito']}**")
-        else:
-            col_ver.warning(f"**{acao['Veredito']}**")
+        # 1. Adicionar Candlesticks
+        fig.add_trace(go.Candlestick(
+            x=hist_df.index, open=hist_df['Open'], high=hist_df['High'],
+            low=hist_df['Low'], close=hist_df['Close'], name='Velas'
+        ), row=1, col=1)
 
-        st.line_chart(acao["Hist"]["Close"], use_container_width=True)
+        # 2. Adicionar Média Móvel (Assertividade)
+        fig.add_trace(go.Scatter(
+            x=hist_df.index, y=hist_df['SMA20'], 
+            line=dict(color='yellow', width=1.5), name='SMA 20'
+        ), row=1, col=1)
+
+        # 3. Adicionar Volume
+        fig.add_trace(go.Bar(
+            x=hist_df.index, y=hist_df['Volume'], 
+            name='Volume', marker_color='rgba(100, 100, 100, 0.5)'
+        ), row=2, col=1)
+
+        fig.update_layout(
+            template="plotly_dark", height=500, margin=dict(l=10, r=10, t=30, b=10),
+            xaxis_rangeslider_visible=False, showlegend=False
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        # --------------------------------------------------------
 
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Preço Atual", f"{moeda_simbolo} {acao['Preço']:.2f}")
@@ -551,17 +502,8 @@ if dados_vencedoras:
         c4.metric("Dív.Líq/EBITDA", round(acao["Dívida"], 2))
         c5.metric("Graham", f"{moeda_simbolo} {acao['Graham']:.2f}", f"{acao['Upside %']:.1f}%")
 
-        with st.expander(f"📊 Detalhes: {acao['Ticker']}"):
-            col_inf1, col_inf2 = st.columns(2)
-            with col_inf1:
-                st.write(f"**Fundamentos (Value Score):** {acao['ValueScore']}/4")
-                st.progress(acao["ValueScore"] / 4)
-                st.write(f"📈 RSI: {acao['RSI']:.2f}")
-                st.write(f"**Expectancy Compra:** {acao['ExpectancyCompra']:.2f}%")
-            with col_inf2:
-                st.write(f"📝 **Motivo IA:** {acao['Motivo']}")
-            st.markdown("---")
-            st.markdown("**Últimas Manchetes:**")
+        with st.expander(f"📊 Detalhes e Notícias: {acao['Ticker']}"):
+            st.write(f"**Motivo IA:** {acao['Motivo']}")
             for n in acao["Links"]:
                 st.markdown(f"• [{n['titulo']}]({n['link']})")
 
