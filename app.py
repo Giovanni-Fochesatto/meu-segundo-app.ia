@@ -41,11 +41,20 @@ def calcular_rsi(data, window: int = 14):
 
 def calcular_score_value(info):
     score = 0
-    if 0 < info.get("trailingPE", 99) < 15: score += 1
-    if 0 < info.get("priceToBook", 99) < 1.5: score += 1
-    if (info.get("dividendYield", 0) or 0) * 100 > 5: score += 1
-    if (info.get("operatingMargins", 0) or 0) > 0.1: score += 1
-    return score
+    criteria = []
+    if 0 < info.get("trailingPE", 99) < 15:
+        score += 1
+        criteria.append("P/L baixo")
+    if 0 < info.get("priceToBook", 99) < 1.5:
+        score += 1
+        criteria.append("P/VP baixo")
+    if (info.get("dividendYield", 0) or 0) * 100 > 5:
+        score += 1
+        criteria.append("DY alto")
+    if (info.get("operatingMargins", 0) or 0) > 0.1:
+        score += 1
+        criteria.append("Margem boa")
+    return score, criteria
 
 # ===================== SIMULAÇÃO PROFISSIONAL =====================
 def simular_performance_historica(hist, min_volume=50000):
@@ -134,7 +143,7 @@ def simular_performance_historica(hist, min_volume=50000):
         "qtd_venda": qtd_v
     }
 
-# ===================== MACROECONÔMICOS =====================
+# ===================== CACHE =====================
 @st.cache_data(ttl=1800, show_spinner=False)
 def obter_macro():
     macro = {}
@@ -153,7 +162,6 @@ def obter_macro():
     macro["Focus_PIB_2026"] = "1.85%"
     return macro
 
-# ===================== CACHE =====================
 @st.cache_data(ttl=300, show_spinner=False)
 def obter_indices():
     indices = {"Ibovespa": "^BVSP", "Nasdaq": "^IXIC", "Dow Jones": "^DJI"}
@@ -209,7 +217,6 @@ def obter_cambio():
     resultados["Bitcoin"] = (btc_real, 0.0)
     return resultados
 
-# ===================== DOWNLOAD EM BATCH =====================
 @st.cache_data(ttl=600, show_spinner=False)
 def obter_dados_batch(tickers, mercado):
     if not tickers:
@@ -269,7 +276,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
     score_p = sum(noticias_texto.count(w) for w in ["alta", "lucro", "compra", "subiu", "dividend", "profit", "buy"])
     score_n = sum(noticias_texto.count(w) for w in ["queda", "prejuízo", "venda", "caiu", "risk", "loss", "sell"])
     rsi_val = calcular_rsi(hist["Close"])
-    score_value = calcular_score_value(info)
+    score_value, criteria = calcular_score_value(info)
     sim = simular_performance_historica(hist)
     # Lógica de veredito
     if estrategia_ativa == "Value Investing (Graham/Buffett)":
@@ -317,6 +324,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
         "Hist": hist,
         "Links": lista_links,
         "ValueScore": score_value,
+        "ValueCriteria": criteria,   # Novo: detalhe dos critérios
         "TaxaCompra": sim["taxa_compra"],
         "TaxaVenda": sim["taxa_venda"],
         "RetornoMedioCompra": sim["retorno_medio_compra"],
@@ -344,7 +352,6 @@ col3, col4 = st.sidebar.columns(2)
 col3.metric("Libra", f"R$ {cambio['Libra'][0]:.2f}", f"{cambio['Libra'][1]:.2f}%")
 col4.metric("Bitcoin", f"R$ {cambio['Bitcoin'][0]:,.0f}", f"{cambio['Bitcoin'][1]:.2f}%")
 st.sidebar.divider()
-# Macro
 st.sidebar.subheader("📊 Macro & Cenário")
 macro = obter_macro()
 st.sidebar.metric("Selic Atual", f"{macro['Selic']:.2f}%")
@@ -411,10 +418,11 @@ if tickers_para_processar:
 with tab1:
     if dados_vencedoras:
         st.subheader(f"🏆 Ranking - Estratégia: {estrategia_ativa}")
-        df_resumo = pd.DataFrame(dados_vencedoras)[
-            ["Ticker", "Preço", "DY %", "Upside %", "Veredito", "Motivo",
-             "TaxaCompra", "ExpectancyCompra", "SharpeCompra", "QtdCompra"]
-        ]
+        df_resumo = pd.DataFrame(dados_vencedoras)
+        # Filtro simples para reduzir zeros
+        df_resumo = df_resumo[df_resumo["Preço"] > 1]
+        df_resumo = df_resumo[["Ticker", "Preço", "DY %", "Upside %", "Veredito", "Motivo",
+                               "TaxaCompra", "ExpectancyCompra", "SharpeCompra", "QtdCompra"]]
         st.dataframe(
             df_resumo.sort_values(by="ExpectancyCompra", ascending=False),
             use_container_width=True,
@@ -469,7 +477,7 @@ with tab2:
     else:
         st.info("Nenhum ativo para exibir no gráfico.")
 
-# ===================== TAB 3 - FUNDAMENTALISTA (Value Score corrigido) =====================
+# ===================== TAB 3 - FUNDAMENTALISTA (Value Score detalhado + Links) =====================
 with tab3:
     st.subheader("📉 Análise Fundamentalista")
     if dados_vencedoras:
@@ -480,11 +488,22 @@ with tab3:
             col2.metric("P/VP", round(acao.get("P/VP", 0), 2))
             col3.metric("DY", f"{acao['DY %']:.2f}%")
             st.metric("Dívida Líquida / EBITDA", round(acao["Dívida"], 2))
-            
-            # Value Score destacado
+
+            # Value Score detalhado
             score = acao.get("ValueScore", 0)
+            criteria = acao.get("ValueCriteria", [])
             st.markdown(f"**Value Score: {score}/4**")
             st.progress(score / 4)
+            if criteria:
+                st.caption("Critérios atendidos: " + " • ".join(criteria))
+            else:
+                st.caption("Nenhum critério de Value Score atendido")
+
+            # Links das manchetes
+            if acao.get("Links"):
+                st.markdown("**Últimas Manchetes:**")
+                for n in acao["Links"]:
+                    st.markdown(f"• [{n['titulo']}]({n['link']})")
             st.divider()
     else:
         st.info("Nenhum ativo encontrado.")
