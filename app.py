@@ -123,7 +123,7 @@ def simular_performance_historica(hist, min_volume=50000):
         taxa_v = ret_med_v = expectancy_v = sharpe_v = sortino_v = 0.0
         qtd_v = 0
 
-    # Max Drawdown aproximado
+    # Max Drawdown
     if len(close) > 10:
         cum_ret = close.pct_change().cumsum()
         peak = cum_ret.cummax()
@@ -164,7 +164,6 @@ def obter_macro():
     macro["Focus_Selic_2026"] = "12.50%"
     macro["Focus_IPCA_2026"] = "4.36%"
     macro["Focus_PIB_2026"] = "1.85%"
-
     return macro
 
 # ===================== CACHE DE MERCADO =====================
@@ -206,7 +205,7 @@ def obter_cambio():
         except:
             resultados[nome] = (0.0, 0.0)
 
-    # Bitcoin em Real
+    # Bitcoin
     btc_real = 0.0
     try:
         t = yf.Ticker("BTC-BRL")
@@ -259,6 +258,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
     hist = hist.copy()
     hist['SMA20'] = hist['Close'].rolling(window=20).mean()
 
+    # Cálculos fundamentais
     pl = info.get("trailingPE", 0) or 0
     pvp = info.get("priceToBook", 0) or 0
     dy = (info.get("dividendYield", 0) or 0) * 100
@@ -383,7 +383,6 @@ st.sidebar.divider()
 # ===================== MACRO & CENÁRIO =====================
 st.sidebar.subheader("📊 Macro & Cenário")
 macro = obter_macro()
-
 st.sidebar.metric("Selic Atual", f"{macro['Selic']:.2f}%")
 st.sidebar.metric("IPCA 12m", f"{macro['IPCA_12m']:.2f}%")
 st.sidebar.metric("Dólar", f"R$ {macro['Dolar']:.2f}")
@@ -401,13 +400,11 @@ with st.sidebar.expander("📌 Impacto no Mercado", expanded=True):
 
 st.sidebar.divider()
 
-# ===================== RESTO DO SIDEBAR =====================
-mercado_selecionado = st.sidebar.radio(
-    "Escolha o Mercado:", ["Brasil", "EUA"], on_change=ativar_filtros
-)
+# ===================== MENU PRINCIPAL =====================
+mercado_selecionado = st.sidebar.radio("Mercado:", ["Brasil", "EUA"], on_change=ativar_filtros)
 
 estrategia_ativa = st.sidebar.selectbox(
-    "Foco da Análise:", 
+    "Estratégia:", 
     ["Value Investing (Graham/Buffett)", "Análise Técnica (Trader)", 
      "Growth Investing", "Dividend Investing", "Position Trading"]
 )
@@ -436,6 +433,9 @@ else:
 st.title(f"🤖 Monitor IA - {mercado_selecionado}")
 st.caption(f"Atualização: {time.strftime('%H:%M:%S')} | Local: Blumenau/SC")
 
+# ===================== TABS =====================
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "📈 Gráfico Técnico", "📉 Fundamentalista", "📜 Backtest"])
+
 # ===================== PROCESSAMENTO =====================
 tickers_para_processar = [busca_direta] if busca_direta else lista_base
 dados_vencedoras = []
@@ -454,86 +454,103 @@ if tickers_para_processar:
         if resultado:
             dados_vencedoras.append(resultado)
 
-# ===================== INTERFACE =====================
-if dados_vencedoras:
-    st.subheader(f"🏆 Ranking de Oportunidades - Estratégia: {estrategia_ativa}")
+# ===================== TAB 1 - OVERVIEW =====================
+with tab1:
+    if dados_vencedoras:
+        st.subheader(f"🏆 Ranking - Estratégia: {estrategia_ativa}")
 
-    df_resumo = pd.DataFrame(dados_vencedoras)[
-        ["Ticker", "Preço", "DY %", "Upside %", "Veredito", "Motivo", 
-         "TaxaCompra", "ExpectancyCompra", "SharpeCompra", "QtdCompra"]
-    ]
+        df_resumo = pd.DataFrame(dados_vencedoras)[
+            ["Ticker", "Preço", "DY %", "Upside %", "Veredito", "Motivo", 
+             "TaxaCompra", "ExpectancyCompra", "SharpeCompra", "QtdCompra"]
+        ]
 
-    st.dataframe(
-        df_resumo.sort_values(by="ExpectancyCompra", ascending=False),
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Veredito": st.column_config.TextColumn("Veredito"),
-            "Motivo": st.column_config.TextColumn("Motivo da IA", width="medium"),
-            "TaxaCompra": st.column_config.NumberColumn("Win Rate", format="%.1f%%"),
-            "ExpectancyCompra": st.column_config.NumberColumn("Expectancy", format="%.2f%%"),
-            "SharpeCompra": st.column_config.NumberColumn("Sharpe", format="%.2f"),
-            "QtdCompra": st.column_config.NumberColumn("Sinais"),
-        },
-    )
-
-    for acao in dados_vencedoras:
-        st.divider()
-        col_tit, col_ver, col_c, col_v = st.columns([3, 1, 1, 1])
-        col_tit.header(f"🏢 {acao['Empresa']} ({acao['Ticker']})")
-
-        col_c.metric("Assert. Compra", f"{acao['TaxaCompra']:.1f}%", f"{acao['QtdCompra']} sinais")
-        col_v.metric("Assert. Venda", f"{acao['TaxaVenda']:.1f}%", f"{acao['QtdVenda']} sinais")
-
-        if acao["Cor"] == "success":
-            col_ver.success(f"**{acao['Veredito']}**")
-        elif acao["Cor"] == "error":
-            col_ver.error(f"**{acao['Veredito']}**")
-        else:
-            col_ver.warning(f"**{acao['Veredito']}**")
-
-        # Gráfico Candlestick
-        hist_df = acao["Hist"]
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03,
-                            subplot_titles=("Candlestick + SMA20", "Volume"))
-
-        fig.add_trace(go.Candlestick(
-            x=hist_df.index,
-            open=hist_df.get('Open', hist_df['Close']),
-            high=hist_df.get('High', hist_df['Close']),
-            low=hist_df.get('Low', hist_df['Close']),
-            close=hist_df['Close']
-        ), row=1, col=1)
-
-        fig.add_trace(go.Scatter(
-            x=hist_df.index, y=hist_df['SMA20'],
-            line=dict(color='yellow', width=1.5), name='SMA 20'
-        ), row=1, col=1)
-
-        fig.add_trace(go.Bar(
-            x=hist_df.index, y=hist_df.get('Volume', 0),
-            marker_color='rgba(120,120,120,0.6)'
-        ), row=2, col=1)
-
-        fig.update_layout(
-            template="plotly_dark", height=520,
-            xaxis_rangeslider_visible=False, showlegend=False
+        st.dataframe(
+            df_resumo.sort_values(by="ExpectancyCompra", ascending=False),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Veredito": st.column_config.TextColumn("Veredito"),
+                "Motivo": st.column_config.TextColumn("Motivo da IA", width="medium"),
+                "TaxaCompra": st.column_config.NumberColumn("Win Rate", format="%.1f%%"),
+                "ExpectancyCompra": st.column_config.NumberColumn("Expectancy", format="%.2f%%"),
+                "SharpeCompra": st.column_config.NumberColumn("Sharpe", format="%.2f"),
+                "QtdCompra": st.column_config.NumberColumn("Sinais"),
+            },
         )
-        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Nenhum ativo encontrado com os filtros atuais.")
 
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Preço Atual", f"{moeda_simbolo} {acao['Preço']:.2f}")
-        c2.metric("P/L", round(acao["P/L"], 2))
-        c3.metric("DY", f"{acao['DY %']:.2f}%")
-        c4.metric("Dív.Líq/EBITDA", round(acao["Dívida"], 2))
-        c5.metric("Graham", f"{moeda_simbolo} {acao['Graham']:.2f}", f"{acao['Upside %']:.1f}%")
+# ===================== TAB 2 - GRÁFICO TÉCNICO =====================
+with tab2:
+    if dados_vencedoras:
+        for acao in dados_vencedoras:
+            st.subheader(f"{acao['Empresa']} ({acao['Ticker']}) - {acao['Veredito']}")
 
-        with st.expander(f"Detalhes: {acao['Ticker']}"):
-            st.write(f"**Motivo IA:** {acao['Motivo']}")
-            st.write(f"**Expectancy Compra:** {acao.get('ExpectancyCompra', 0):.2f}%")
-            st.write(f"**Sharpe Compra:** {acao.get('SharpeCompra', 0):.2f}")
-            for n in acao["Links"]:
-                st.markdown(f"• [{n['titulo']}]({n['link']})")
+            hist_df = acao["Hist"]
 
+            # Bandas de Bollinger
+            hist_df['SMA20'] = hist_df['Close'].rolling(window=20).mean()
+            hist_df['STD20'] = hist_df['Close'].rolling(window=20).std()
+            hist_df['BB_Upper'] = hist_df['SMA20'] + (hist_df['STD20'] * 2)
+            hist_df['BB_Lower'] = hist_df['SMA20'] - (hist_df['STD20'] * 2)
+
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03,
+                                subplot_titles=("Candlestick + Bollinger Bands + SMA20", "Volume"))
+
+            # Candlestick
+            fig.add_trace(go.Candlestick(
+                x=hist_df.index,
+                open=hist_df.get('Open', hist_df['Close']),
+                high=hist_df.get('High', hist_df['Close']),
+                low=hist_df.get('Low', hist_df['Close']),
+                close=hist_df['Close'],
+                name="Candlestick"
+            ), row=1, col=1)
+
+            # Bollinger Bands
+            fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['BB_Upper'], line=dict(color='red', width=1), name='BB Upper'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['BB_Lower'], line=dict(color='green', width=1), name='BB Lower'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['SMA20'], line=dict(color='yellow', width=1.5), name='SMA 20'), row=1, col=1)
+
+            # Volume
+            fig.add_trace(go.Bar(x=hist_df.index, y=hist_df.get('Volume', 0), 
+                                 marker_color='rgba(100,100,100,0.6)', name='Volume'), row=2, col=1)
+
+            fig.update_layout(template="plotly_dark", height=600, 
+                              xaxis_rangeslider_visible=False, showlegend=True)
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Métricas rápidas
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Preço Atual", f"{moeda_simbolo} {acao['Preço']:.2f}")
+            c2.metric("Expectancy", f"{acao.get('ExpectancyCompra', 0):.2f}%")
+            c3.metric("Sharpe", f"{acao.get('SharpeCompra', 0):.2f}")
+
+    else:
+        st.info("Nenhum ativo para exibir no gráfico.")
+
+# ===================== TAB 3 - FUNDAMENTALISTA =====================
+with tab3:
+    st.subheader("📉 Análise Fundamentalista")
+    if dados_vencedoras:
+        for acao in dados_vencedoras:
+            st.write(f"**{acao['Empresa']} ({acao['Ticker']})**")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("P/L", round(acao["P/L"], 2))
+            col2.metric("P/VP", round(acao.get("P/VP", 0), 2))  # se tiver
+            col3.metric("DY", f"{acao['DY %']:.2f}%")
+            st.metric("Dívida Líquida / EBITDA", round(acao["Dívida"], 2))
+            st.progress(acao["ValueScore"] / 4)
+            st.caption(f"Value Score: {acao['ValueScore']}/4")
+            st.divider()
+    else:
+        st.info("Nenhum ativo encontrado.")
+
+# ===================== TAB 4 - BACKTEST =====================
+with tab4:
+    st.subheader("📜 Backtest & Estatísticas")
+    st.info("Em desenvolvimento - Aqui virá o histórico de performance da IA.")
+
+# ===================== FIM =====================
 else:
     st.info("💡 Use os filtros ou faça uma busca direta para começar.")
