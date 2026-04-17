@@ -47,15 +47,8 @@ def calcular_score_value(info):
     if (info.get("operatingMargins", 0) or 0) > 0.1: score += 1
     return score
 
-# ===================== SIMULAÇÃO PROFISSIONAL (Fase 1) =====================
-def simular_performance_historica(hist, min_volume=50000, min_retorno=0.005):
-    """
-    Simulação robusta com métricas profissionais:
-    - Sharpe Ratio
-    - Sortino Ratio
-    - Max Drawdown
-    - Expectancy ajustado por risco
-    """
+# ===================== SIMULAÇÃO PROFISSIONAL =====================
+def simular_performance_historica(hist, min_volume=50000):
     if len(hist) < 300:
         return {
             "taxa_compra": 0.0, "taxa_venda": 0.0,
@@ -77,29 +70,18 @@ def simular_performance_historica(hist, min_volume=50000, min_retorno=0.005):
     sinal_macd = macd.ewm(span=9, adjust=False).mean()
 
     retorno_15d = close.shift(-15) / close - 1
-
-    # Filtros de qualidade
     liquid_mask = volume > min_volume
-    retorno_valido = retorno_15d.notna()
 
     buy_mask = (
-        (rsi < 35) &
-        (close > sma200) &
-        (macd > sinal_macd) &
-        retorno_valido &
-        liquid_mask &
-        (abs(retorno_15d) > min_retorno)  # evita trades muito pequenos
+        (rsi < 35) & (close > sma200) & (macd > sinal_macd) &
+        retorno_15d.notna() & liquid_mask
     )
-
     sell_mask = (
-        (rsi > 70) &
-        ((close < sma200) | (macd < sinal_macd)) &
-        retorno_valido &
-        liquid_mask &
-        (abs(retorno_15d) > min_retorno)
+        (rsi > 70) & ((close < sma200) | (macd < sinal_macd)) &
+        retorno_15d.notna() & liquid_mask
     )
 
-    # ===================== COMPRAS =====================
+    # Compras
     if buy_mask.any():
         ret_buy = retorno_15d[buy_mask]
         qtd_c = int(buy_mask.sum())
@@ -110,22 +92,17 @@ def simular_performance_historica(hist, min_volume=50000, min_retorno=0.005):
         losses = ret_buy[ret_buy < 0]
         avg_win = wins.mean() if not wins.empty else 0
         avg_loss = abs(losses.mean()) if not losses.empty else 0
-
         expectancy_c = (taxa_c/100 * avg_win) - ((1 - taxa_c/100) * avg_loss) * 100
 
-        # Sharpe e Sortino (anualizado aproximado)
         returns = ret_buy.dropna()
-        if len(returns) > 5:
-            sharpe_c = returns.mean() / returns.std() * np.sqrt(252) if returns.std() != 0 else 0
-            downside = returns[returns < 0]
-            sortino_c = returns.mean() / downside.std() * np.sqrt(252) if not downside.empty and downside.std() != 0 else 0
-        else:
-            sharpe_c = sortino_c = 0.0
+        sharpe_c = returns.mean() / returns.std() * np.sqrt(252) if len(returns) > 5 and returns.std() != 0 else 0
+        downside = returns[returns < 0]
+        sortino_c = returns.mean() / downside.std() * np.sqrt(252) if len(downside) > 5 and downside.std() != 0 else 0
     else:
         taxa_c = ret_med_c = expectancy_c = sharpe_c = sortino_c = 0.0
         qtd_c = 0
 
-    # ===================== VENDAS =====================
+    # Vendas
     if sell_mask.any():
         ret_sell = retorno_15d[sell_mask]
         qtd_v = int(sell_mask.sum())
@@ -136,21 +113,17 @@ def simular_performance_historica(hist, min_volume=50000, min_retorno=0.005):
         losses_v = ret_sell[ret_sell > 0]
         avg_win_v = abs(wins_v.mean()) if not wins_v.empty else 0
         avg_loss_v = losses_v.mean() if not losses_v.empty else 0
-
         expectancy_v = (taxa_v/100 * avg_win_v) - ((1 - taxa_v/100) * avg_loss_v) * 100
 
         returns_v = ret_sell.dropna()
-        if len(returns_v) > 5:
-            sharpe_v = returns_v.mean() / returns_v.std() * np.sqrt(252) if returns_v.std() != 0 else 0
-            downside_v = returns_v[returns_v > 0]  # para venda, downside é quando sobe
-            sortino_v = returns_v.mean() / downside_v.std() * np.sqrt(252) if not downside_v.empty and downside_v.std() != 0 else 0
-        else:
-            sharpe_v = sortino_v = 0.0
+        sharpe_v = returns_v.mean() / returns_v.std() * np.sqrt(252) if len(returns_v) > 5 and returns_v.std() != 0 else 0
+        downside_v = returns_v[returns_v > 0]
+        sortino_v = returns_v.mean() / downside_v.std() * np.sqrt(252) if len(downside_v) > 5 and downside_v.std() != 0 else 0
     else:
         taxa_v = ret_med_v = expectancy_v = sharpe_v = sortino_v = 0.0
         qtd_v = 0
 
-    # Max Drawdown aproximado (simples)
+    # Max Drawdown aproximado
     if len(close) > 10:
         cum_ret = close.pct_change().cumsum()
         peak = cum_ret.cummax()
@@ -173,6 +146,27 @@ def simular_performance_historica(hist, min_volume=50000, min_retorno=0.005):
         "qtd_venda": qtd_v
     }
 
+# ===================== MACROECONÔMICOS =====================
+@st.cache_data(ttl=1800, show_spinner=False)
+def obter_macro():
+    macro = {}
+    try:
+        selic_data = yf.Ticker("^SELIC").history(period="5d")
+        macro["Selic"] = float(selic_data["Close"].iloc[-1]) if not selic_data.empty else 14.75
+        macro["Dolar"] = yf.Ticker("USDBRL=X").fast_info.last_price
+        macro["IPCA_12m"] = 4.14
+    except Exception:
+        macro["Selic"] = 14.75
+        macro["Dolar"] = 4.99
+        macro["IPCA_12m"] = 4.14
+
+    macro["Focus_Data"] = "13/04/2026"
+    macro["Focus_Selic_2026"] = "12.50%"
+    macro["Focus_IPCA_2026"] = "4.36%"
+    macro["Focus_PIB_2026"] = "1.85%"
+
+    return macro
+
 # ===================== CACHE DE MERCADO =====================
 @st.cache_data(ttl=300, show_spinner=False)
 def obter_indices():
@@ -191,6 +185,7 @@ def obter_indices():
         except:
             resultados[nome] = (0.0, 0.0)
     return resultados
+
 
 @st.cache_data(ttl=90, show_spinner=False)
 def obter_cambio():
@@ -211,7 +206,7 @@ def obter_cambio():
         except:
             resultados[nome] = (0.0, 0.0)
 
-    # Bitcoin
+    # Bitcoin em Real
     btc_real = 0.0
     try:
         t = yf.Ticker("BTC-BRL")
@@ -230,6 +225,7 @@ def obter_cambio():
             pass
     resultados["Bitcoin"] = (btc_real, 0.0)
     return resultados
+
 
 # ===================== DOWNLOAD EM BATCH =====================
 @st.cache_data(ttl=600, show_spinner=False)
@@ -252,6 +248,7 @@ def obter_dados_batch(tickers, mercado):
             info_dict[t_orig] = {}
             hist_dict[t_orig] = pd.DataFrame()
     return info_dict, hist_dict
+
 
 # ===================== PROCESSAMENTO CENTRAL =====================
 def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
@@ -302,7 +299,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
 
     sim = simular_performance_historica(hist)
 
-    # Lógica de veredito (mantida inteligente)
+    # Lógica de veredito
     if estrategia_ativa == "Value Investing (Graham/Buffett)":
         if upside > 25 and score_value >= 3 and div_e < 2.5:
             veredito, cor = "VALOR FORTE ✅", "success"
@@ -383,19 +380,34 @@ col4.metric("Bitcoin", f"R$ {cambio['Bitcoin'][0]:,.0f}", f"{cambio['Bitcoin'][1
 
 st.sidebar.divider()
 
-# Macro (mantido simples por enquanto)
+# ===================== MACRO & CENÁRIO =====================
 st.sidebar.subheader("📊 Macro & Cenário")
 macro = obter_macro()
+
 st.sidebar.metric("Selic Atual", f"{macro['Selic']:.2f}%")
 st.sidebar.metric("IPCA 12m", f"{macro['IPCA_12m']:.2f}%")
 st.sidebar.metric("Dólar", f"R$ {macro['Dolar']:.2f}")
 
+with st.sidebar.expander("📌 Impacto no Mercado", expanded=True):
+    st.markdown("""
+    **Selic Alta** → Prejudica crescimento e empresas alavancadas  
+    **Inflação Controlada** → Melhora margens de lucro  
+    **Dólar Alto** → Favorece exportadoras
+    """)
+    st.markdown(f"**Último Focus ({macro['Focus_Data']})**")
+    st.markdown(f"- Selic 2026: **{macro['Focus_Selic_2026']}**")
+    st.markdown(f"- IPCA 2026: **{macro['Focus_IPCA_2026']}**")
+    st.markdown(f"- PIB 2026: **{macro['Focus_PIB_2026']}**")
+
 st.sidebar.divider()
 
-mercado_selecionado = st.sidebar.radio("Mercado:", ["Brasil", "EUA"], on_change=ativar_filtros)
+# ===================== RESTO DO SIDEBAR =====================
+mercado_selecionado = st.sidebar.radio(
+    "Escolha o Mercado:", ["Brasil", "EUA"], on_change=ativar_filtros
+)
 
 estrategia_ativa = st.sidebar.selectbox(
-    "Estratégia:", 
+    "Foco da Análise:", 
     ["Value Investing (Graham/Buffett)", "Análise Técnica (Trader)", 
      "Growth Investing", "Dividend Investing", "Position Trading"]
 )
@@ -444,7 +456,7 @@ if tickers_para_processar:
 
 # ===================== INTERFACE =====================
 if dados_vencedoras:
-    st.subheader(f"🏆 Ranking - Estratégia: {estrategia_ativa}")
+    st.subheader(f"🏆 Ranking de Oportunidades - Estratégia: {estrategia_ativa}")
 
     df_resumo = pd.DataFrame(dados_vencedoras)[
         ["Ticker", "Preço", "DY %", "Upside %", "Veredito", "Motivo", 
@@ -485,25 +497,35 @@ if dados_vencedoras:
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03,
                             subplot_titles=("Candlestick + SMA20", "Volume"))
 
-        fig.add_trace(go.Candlestick(x=hist_df.index, open=hist_df.get('Open', hist_df['Close']), 
-                                     high=hist_df.get('High', hist_df['Close']), 
-                                     low=hist_df.get('Low', hist_df['Close']), 
-                                     close=hist_df['Close']), row=1, col=1)
+        fig.add_trace(go.Candlestick(
+            x=hist_df.index,
+            open=hist_df.get('Open', hist_df['Close']),
+            high=hist_df.get('High', hist_df['Close']),
+            low=hist_df.get('Low', hist_df['Close']),
+            close=hist_df['Close']
+        ), row=1, col=1)
 
-        fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['SMA20'], 
-                                 line=dict(color='yellow', width=1.5), name='SMA 20'), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=hist_df.index, y=hist_df['SMA20'],
+            line=dict(color='yellow', width=1.5), name='SMA 20'
+        ), row=1, col=1)
 
-        fig.add_trace(go.Bar(x=hist_df.index, y=hist_df.get('Volume', 0), 
-                             marker_color='rgba(120,120,120,0.6)'), row=2, col=1)
+        fig.add_trace(go.Bar(
+            x=hist_df.index, y=hist_df.get('Volume', 0),
+            marker_color='rgba(120,120,120,0.6)'
+        ), row=2, col=1)
 
-        fig.update_layout(template="plotly_dark", height=520, xaxis_rangeslider_visible=False, showlegend=False)
+        fig.update_layout(
+            template="plotly_dark", height=520,
+            xaxis_rangeslider_visible=False, showlegend=False
+        )
         st.plotly_chart(fig, use_container_width=True)
 
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Preço Atual", f"{moeda_simbolo} {acao['Preço']:.2f}")
         c2.metric("P/L", round(acao["P/L"], 2))
         c3.metric("DY", f"{acao['DY %']:.2f}%")
-        c4.metric("Dívida/EBITDA", round(acao["Dívida"], 2))
+        c4.metric("Dív.Líq/EBITDA", round(acao["Dívida"], 2))
         c5.metric("Graham", f"{moeda_simbolo} {acao['Graham']:.2f}", f"{acao['Upside %']:.1f}%")
 
         with st.expander(f"Detalhes: {acao['Ticker']}"):
