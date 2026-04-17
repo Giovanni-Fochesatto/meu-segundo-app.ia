@@ -50,38 +50,95 @@ def calcular_score_value(info):
         score += 1
     return score
 
+# ===================== NOVA SIMULAÇÃO VETORIZADA MELHORADA =====================
 def simular_performance_historica(hist):
+    """Simulação melhorada e mais realista de assertividade"""
     if len(hist) < 300:
-        return 0.0, 0.0, 0.0, 0, 0
+        return {
+            "taxa_compra": 0.0,
+            "taxa_venda": 0.0,
+            "retorno_medio_compra": 0.0,
+            "retorno_medio_venda": 0.0,
+            "expectancy_compra": 0.0,
+            "expectancy_venda": 0.0,
+            "qtd_compra": 0,
+            "qtd_venda": 0,
+            "win_rate_compra": 0.0,
+            "win_rate_venda": 0.0
+        }
+
     close = hist["Close"].copy()
+
+    # Indicadores técnicos
     rsi = calcular_rsi_series(close)
     sma200 = close.rolling(window=200).mean()
     exp12 = close.ewm(span=12, adjust=False).mean()
     exp26 = close.ewm(span=26, adjust=False).mean()
     macd = exp12 - exp26
     sinal_macd = macd.ewm(span=9, adjust=False).mean()
+
+    # Retorno real futuro (15 dias à frente)
     retorno_15d = close.shift(-15) / close - 1
 
+    # Sinais de Compra e Venda (sem look-ahead bias)
     buy_mask = (
-        (rsi < 35) & (close > sma200) & (macd > sinal_macd) & retorno_15d.notna()
-    )
-    sell_mask = (
-        (rsi > 70) & ((close < sma200) | (macd < sinal_macd)) & retorno_15d.notna()
+        (rsi < 35) &
+        (close > sma200) &
+        (macd > sinal_macd) &
+        retorno_15d.notna()
     )
 
+    sell_mask = (
+        (rsi > 70) &
+        ((close < sma200) | (macd < sinal_macd)) &
+        retorno_15d.notna()
+    )
+
+    # ===================== CÁLCULO PARA COMPRAS =====================
     if buy_mask.any():
         ret_buy = retorno_15d[buy_mask]
-        taxa_compra = (ret_buy > 0).mean() * 100
-        retorno_medio = ret_buy.mean() * 100
-        total_c = int(buy_mask.sum())
-    else:
-        taxa_compra = 0.0
-        retorno_medio = 0.0
-        total_c = 0
+        qtd_compra = int(buy_mask.sum())
+        win_rate_compra = (ret_buy > 0).mean() * 100
+        retorno_medio_compra = ret_buy.mean() * 100
 
-    taxa_venda = (retorno_15d[sell_mask] < 0).mean() * 100 if sell_mask.any() else 0.0
-    total_v = int(sell_mask.sum()) if sell_mask.any() else 0
-    return taxa_compra, taxa_venda, retorno_medio, total_c, total_v
+        avg_win = ret_buy[ret_buy > 0].mean() if (ret_buy > 0).any() else 0
+        avg_loss = abs(ret_buy[ret_buy < 0].mean()) if (ret_buy < 0).any() else 0
+        expectancy_compra = (win_rate_compra/100 * avg_win) - ((1 - win_rate_compra/100) * avg_loss) * 100
+    else:
+        win_rate_compra = 0.0
+        retorno_medio_compra = 0.0
+        expectancy_compra = 0.0
+        qtd_compra = 0
+
+    # ===================== CÁLCULO PARA VENDAS =====================
+    if sell_mask.any():
+        ret_sell = retorno_15d[sell_mask]
+        qtd_venda = int(sell_mask.sum())
+        win_rate_venda = (ret_sell < 0).mean() * 100
+        retorno_medio_venda = ret_sell.mean() * 100
+
+        avg_win_sell = abs(ret_sell[ret_sell < 0].mean()) if (ret_sell < 0).any() else 0
+        avg_loss_sell = ret_sell[ret_sell > 0].mean() if (ret_sell > 0).any() else 0
+        expectancy_venda = (win_rate_venda/100 * avg_win_sell) - ((1 - win_rate_venda/100) * avg_loss_sell) * 100
+    else:
+        win_rate_venda = 0.0
+        retorno_medio_venda = 0.0
+        expectancy_venda = 0.0
+        qtd_venda = 0
+
+    return {
+        "taxa_compra": win_rate_compra,
+        "taxa_venda": win_rate_venda,
+        "retorno_medio_compra": retorno_medio_compra,
+        "retorno_medio_venda": retorno_medio_venda,
+        "expectancy_compra": expectancy_compra,
+        "expectancy_venda": expectancy_venda,
+        "qtd_compra": qtd_compra,
+        "qtd_venda": qtd_venda,
+        "win_rate_compra": win_rate_compra,
+        "win_rate_venda": win_rate_venda
+    }
+
 
 # ===================== CACHE DE MERCADO =====================
 @st.cache_data(ttl=300, show_spinner=False)
@@ -112,7 +169,6 @@ def obter_cambio():
     }
     resultados = {}
 
-    # Moedas fiduciárias
     for nome, ticker in moedas.items():
         try:
             t = yf.Ticker(ticker)
@@ -128,11 +184,9 @@ def obter_cambio():
         except:
             resultados[nome] = (0.0, 0.0)
 
-    # ===================== BITCOIN EM REAL =====================
+    # Bitcoin em Real
     btc_real = 0.0
     variacao_btc = 0.0
-
-    # 1. Tenta BTC-BRL direto
     try:
         t = yf.Ticker("BTC-BRL")
         data = t.history(period="2d")
@@ -145,13 +199,11 @@ def obter_cambio():
     except:
         pass
 
-    # 2. Fallback: BTC-USD convertido pelo dólar atual
     if btc_real < 100000:
         try:
             btc_usd = float(yf.Ticker("BTC-USD").fast_info.last_price)
             dolar_brl = resultados.get("Dólar", (4.99, 0))[0]
             btc_real = btc_usd * dolar_brl
-            variacao_btc = 0.0
         except:
             pass
 
@@ -169,8 +221,12 @@ def obter_dados_batch(tickers, mercado):
         for t in tickers
     ]
     hist_multi = yf.download(
-        tickers_yf, period="5y", group_by="ticker",
-        auto_adjust=True, progress=False, threads=True
+        tickers_yf,
+        period="5y",
+        group_by="ticker",
+        auto_adjust=True,
+        progress=False,
+        threads=True,
     )
     info_dict = {}
     hist_dict = {}
@@ -193,6 +249,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
                     f_pl, f_pvp, f_dy, f_div_ebitda, busca_direta, mercado):
     if hist.empty or not info:
         return None
+
     pl = info.get("trailingPE", 0) or 0
     pvp = info.get("priceToBook", 0) or 0
     dy = (info.get("dividendYield", 0) or 0) * 100
@@ -210,6 +267,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
         if not (pl <= f_pl and pvp <= f_pvp and dy >= f_dy and div_e <= f_div_ebitda):
             return None
 
+    # Notícias
     noticias_texto = ""
     lista_links = []
     try:
@@ -228,8 +286,11 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
 
     rsi_val = calcular_rsi(hist["Close"])
     score_value = calcular_score_value(info)
-    taxa_compra, taxa_venda, retorno_medio, total_c, total_v = simular_performance_historica(hist)
 
+    # === NOVA SIMULAÇÃO ===
+    sim = simular_performance_historica(hist)
+
+    # Lógica de veredito (mantida igual)
     if estrategia_ativa == "Value Investing (Graham/Buffett)":
         if upside > 20 and score_value >= 3:
             veredito, cor = "VALOR ✅", "success"
@@ -277,12 +338,17 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
         "RSI": rsi_val,
         "Hist": hist,
         "Links": lista_links,
-        "TaxaCompra": taxa_compra,
-        "TaxaVenda": taxa_venda,
-        "RetornoMedio": retorno_medio,
-        "QtdCompra": total_c,
-        "QtdVenda": total_v,
         "ValueScore": score_value,
+
+        # Novas métricas de assertividade
+        "TaxaCompra": sim["taxa_compra"],
+        "TaxaVenda": sim["taxa_venda"],
+        "RetornoMedioCompra": sim["retorno_medio_compra"],
+        "RetornoMedioVenda": sim["retorno_medio_venda"],
+        "ExpectancyCompra": sim["expectancy_compra"],
+        "ExpectancyVenda": sim["expectancy_venda"],
+        "QtdCompra": sim["qtd_compra"],
+        "QtdVenda": sim["qtd_venda"],
     }
 
 
@@ -299,12 +365,10 @@ st.sidebar.divider()
 st.sidebar.subheader("💱 Câmbio em Tempo Real")
 cambio = obter_cambio()
 
-# Layout solicitado: Dólar | Euro
 col1, col2 = st.sidebar.columns(2)
 col1.metric("Dólar", f"R$ {cambio['Dólar'][0]:.2f}", f"{cambio['Dólar'][1]:.2f}%")
 col2.metric("Euro",  f"R$ {cambio['Euro'][0]:.2f}",  f"{cambio['Euro'][1]:.2f}%")
 
-# Libra | Bitcoin
 col3, col4 = st.sidebar.columns(2)
 col3.metric("Libra", f"R$ {cambio['Libra'][0]:.2f}", f"{cambio['Libra'][1]:.2f}%")
 col4.metric("Bitcoin", f"R$ {cambio['Bitcoin'][0]:,.0f}", f"{cambio['Bitcoin'][1]:.2f}%")
@@ -386,15 +450,16 @@ if dados_vencedoras:
     st.subheader(f"🏆 Ranking de Oportunidades - Estratégia: {estrategia_ativa}")
     with st.expander("📌 Legenda de Sinais e Vereditos"):
         st.markdown("""
-        * **VALOR ✅**: Grande desconto + bons fundamentos
-        * **COMPRA ✅**: RSI saudável + notícias positivas
-        * **VENDA / CARO 🚨**: RSI extremo ou preço acima do justo
-        * **CAUTELA ⚠️**: Divergência entre preço, RSI e sentimento
+        * **VALOR ✅**: Grande desconto + bons fundamentos  
+        * **COMPRA ✅**: RSI saudável + notícias positivas  
+        * **VENDA / CARO 🚨**: RSI extremo ou preço acima do justo  
+        * **CAUTELA ⚠️**: Divergência entre preço, RSI e sentimento  
         * **Graham**: Valor intrínseco calculado pela fórmula de Benjamin Graham
         """)
 
     df_resumo = pd.DataFrame(dados_vencedoras)[
-        ["Ticker", "Preço", "DY %", "Upside %", "Veredito", "Motivo", "TaxaCompra", "TaxaVenda"]
+        ["Ticker", "Preço", "DY %", "Upside %", "Veredito", "Motivo", 
+         "TaxaCompra", "TaxaVenda", "QtdCompra", "QtdVenda"]
     ]
 
     st.dataframe(
@@ -402,10 +467,10 @@ if dados_vencedoras:
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Veredito": st.column_config.TextColumn("Veredito"),
-            "Motivo": st.column_config.TextColumn("Motivo da IA", width="medium"),
-            "TaxaCompra": st.column_config.NumberColumn("Assert. Compra (5y)", format="%.1f%%"),
-            "TaxaVenda": st.column_config.NumberColumn("Assert. Venda (5y)", format="%.1f%%"),
+            "TaxaCompra": st.column_config.NumberColumn("Win Rate Compra %", format="%.1f%%"),
+            "TaxaVenda": st.column_config.NumberColumn("Win Rate Venda %", format="%.1f%%"),
+            "QtdCompra": st.column_config.NumberColumn("Sinais Compra"),
+            "QtdVenda": st.column_config.NumberColumn("Sinais Venda"),
         },
     )
 
@@ -413,8 +478,9 @@ if dados_vencedoras:
         st.divider()
         col_tit, col_ver, col_acc_c, col_acc_v = st.columns([3, 1, 1, 1])
         col_tit.header(f"🏢 {acao['Empresa']} ({acao['Ticker']})")
-        col_acc_c.metric("Assertividade Compra", f"{acao['TaxaCompra']:.1f}%", f"{acao['QtdCompra']} sinais")
-        col_acc_v.metric("Assertividade Venda", f"{acao['TaxaVenda']:.1f}%", f"{acao['QtdVenda']} sinais")
+        
+        col_acc_c.metric("Assert. Compra", f"{acao['TaxaCompra']:.1f}%", f"{acao['QtdCompra']} sinais")
+        col_acc_v.metric("Assert. Venda", f"{acao['TaxaVenda']:.1f}%", f"{acao['QtdVenda']} sinais")
 
         if acao["Cor"] == "success":
             col_ver.success(f"**{acao['Veredito']}**")
@@ -432,7 +498,7 @@ if dados_vencedoras:
         c4.metric("Dív.Líq/EBITDA", round(acao["Dívida"], 2))
         c5.metric("Graham", f"{moeda_simbolo} {acao['Graham']:.2f}", f"{acao['Upside %']:.1f}%")
 
-        with st.expander(f"📊 Detalhes Fundamentalistas e Técnicos: {acao['Ticker']}"):
+        with st.expander(f"📊 Detalhes: {acao['Ticker']}"):
             col_inf1, col_inf2 = st.columns(2)
             with col_inf1:
                 st.write(f"**Fundamentos (Value Score):** {acao['ValueScore']}/4")
