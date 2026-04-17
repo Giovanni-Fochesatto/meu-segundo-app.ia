@@ -542,5 +542,4 @@ with tab4:
     st.info("Em desenvolvimento — Aqui virá o histórico de performance da IA ao longo do tempo.")
 
 # ===================== FIM =====================
-else:
     st.info("💡 Use os filtros ou faça uma busca direta para começar.")
