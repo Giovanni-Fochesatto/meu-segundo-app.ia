@@ -17,21 +17,26 @@ if "filtros_ativos" not in st.session_state:
 def ativar_filtros():
     st.session_state.filtros_ativos = True
 
-# ===================== FUNÇÕES BÁSICAS =====================
+# ===================== FUNÇÕES TÉCNICAS =====================
 def calcular_graham(lpa, vpa):
     if lpa > 0 and vpa > 0:
         return np.sqrt(22.5 * lpa * vpa)
     return 0.0
 
-def calcular_rsi(data, window: int = 14):
-    if len(data) < window:
-        return 50.0
-    delta = data.diff()
+def calcular_rsi_series(close: pd.Series, window: int = 14) -> pd.Series:
+    if len(close) < window:
+        return pd.Series([50.0] * len(close), index=close.index)
+    delta = close.diff()
     gain = delta.where(delta > 0, 0).rolling(window=window).mean()
     loss = -delta.where(delta < 0, 0).rolling(window=window).mean()
     rs = gain / loss.where(loss != 0, np.nan)
     rsi = 100 - (100 / (1 + rs))
-    return float(rsi.iloc[-1])
+    return rsi.fillna(50)
+
+def calcular_rsi(data, window: int = 14):
+    if len(data) < window:
+        return 50.0
+    return float(calcular_rsi_series(data, window).iloc[-1])
 
 def calcular_score_value(info):
     score = 0
@@ -50,52 +55,30 @@ def calcular_score_value(info):
         criteria.append("Margem boa")
     return score, criteria
 
+# ===================== SIMULAÇÃO =====================
+def simular_performance_historica(hist, min_volume=50000):
+    if len(hist) < 100:
+        return {"expectancy_compra": 0.0, "sharpe_compra": 0.0, "qtd_compra": 0}
+    close = hist["Close"].copy() if "Close" in hist.columns else hist.iloc[:, -1]
+    retorno_15d = close.shift(-15) / close - 1
+    buy_mask = retorno_15d.notna()
+    if buy_mask.any():
+        ret_buy = retorno_15d[buy_mask]
+        expectancy = ret_buy.mean() * 100
+        sharpe = ret_buy.mean() / ret_buy.std() * np.sqrt(252) if ret_buy.std() != 0 else 0
+        qtd = int(buy_mask.sum())
+    else:
+        expectancy = sharpe = 0.0
+        qtd = 0
+    return {"expectancy_compra": expectancy, "sharpe_compra": sharpe, "qtd_compra": qtd}
+
 # ===================== CACHE =====================
-@st.cache_data(ttl=300)
-def obter_indices():
-    indices = {"Ibovespa": "^BVSP"}
-    resultados = {}
-    for nome, ticker in indices.items():
-        try:
-            data = yf.Ticker(ticker).history(period="2d")
-            if not data.empty and len(data) >= 2:
-                atual = data["Close"].iloc[-1]
-                anterior = data["Close"].iloc[-2]
-                variacao = ((atual / anterior) - 1) * 100
-                resultados[nome] = (atual, variacao)
-            else:
-                resultados[nome] = (0.0, 0.0)
-        except:
-            resultados[nome] = (0.0, 0.0)
-    return resultados
-
-@st.cache_data(ttl=90)
-def obter_cambio():
-    moedas = {"Dólar": "USDBRL=X"}
-    resultados = {}
-    for nome, ticker in moedas.items():
-        try:
-            t = yf.Ticker(ticker)
-            data = t.history(period="2d")
-            if not data.empty and len(data) >= 2:
-                atual = float(data["Close"].iloc[-1])
-                anterior = float(data["Close"].iloc[-2])
-                variacao = ((atual / anterior) - 1) * 100
-            else:
-                atual = float(t.fast_info.last_price)
-                variacao = 0.0
-            resultados[nome] = (atual, variacao)
-        except:
-            resultados[nome] = (0.0, 0.0)
-    resultados["Bitcoin"] = (0.0, 0.0)  # simplificado
-    return resultados
-
 @st.cache_data(ttl=600)
 def obter_dados_batch(tickers, mercado):
     if not tickers:
         return {}, {}
     tickers_yf = [t + ".SA" if mercado == "Brasil" and not t.endswith(".SA") else t for t in tickers]
-    hist_multi = yf.download(tickers_yf, period="1y", group_by="ticker", auto_adjust=True, progress=False)
+    hist_multi = yf.download(tickers_yf, period="2y", group_by="ticker", auto_adjust=True, progress=False)
     info_dict = {}
     hist_dict = {}
     for i, t_orig in enumerate(tickers):
@@ -105,30 +88,40 @@ def obter_dados_batch(tickers, mercado):
             if len(tickers) == 1:
                 hist_dict[t_orig] = hist_multi
             else:
-                hist_dict[t_orig] = hist_multi[t_yf] if t_yf in hist_multi.columns.get_level_values(0) else pd.DataFrame()
-        except Exception as e:
-            st.sidebar.error(f"Erro ao baixar {t_orig}: {str(e)}")
+                # Tratamento para multi-level columns
+                if isinstance(hist_multi.columns, pd.MultiIndex):
+                    if t_yf in hist_multi.columns.get_level_values(0):
+                        hist_dict[t_orig] = hist_multi[t_yf]
+                    else:
+                        hist_dict[t_orig] = pd.DataFrame()
+                else:
+                    hist_dict[t_orig] = hist_multi
+        except Exception:
             info_dict[t_orig] = {}
             hist_dict[t_orig] = pd.DataFrame()
     return info_dict, hist_dict
 
 # ===================== PROCESSAMENTO =====================
 def processar_ativo(tkr, info, hist, estrategia_ativa, mercado):
-    if hist.empty:
-        st.sidebar.warning(f"Histórico vazio para {tkr}")
-        return None
-    if not info:
-        st.sidebar.warning(f"Info vazio para {tkr}")
+    if hist.empty or not info:
         return None
 
-    p_atual = float(hist["Close"].iloc[-1]) if not hist.empty else 0
+    # Tratamento seguro para Close
+    if isinstance(hist.columns, pd.MultiIndex):
+        close_col = ('Close', tkr) if ('Close', tkr) in hist.columns else hist.columns[-1]
+        close = hist[close_col]
+    else:
+        close = hist["Close"] if "Close" in hist.columns else hist.iloc[:, -1]
+
+    p_atual = float(close.iloc[-1]) if not close.empty else 0
+
     pl = info.get("trailingPE", 0) or 0
     dy = (info.get("dividendYield", 0) or 0) * 100
     score_value, criteria = calcular_score_value(info)
 
     veredito = "NEUTRO ⚖️"
     cor = "warning"
-    motivo = "Processando..."
+    motivo = "Dados processados"
 
     return {
         "Ticker": tkr,
@@ -140,7 +133,10 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, mercado):
         "Motivo": motivo,
         "ValueScore": score_value,
         "ValueCriteria": criteria,
-        "Links": []  # será preenchido depois
+        "Links": [],
+        "ExpectancyCompra": 0.0,
+        "SharpeCompra": 0.0,
+        "QtdCompra": 0
     }
 
 # ===================== INTERFACE =====================
@@ -150,7 +146,7 @@ st.caption(f"Atualização: {time.strftime('%H:%M:%S')} | Local: Blumenau/SC")
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "📈 Gráfico Técnico", "📉 Fundamentalista", "📜 Backtest"])
 
 mercado_selecionado = "Brasil"
-lista_base = ["PETR4", "VALE3", "ITUB4", "BBAS3", "B3SA3", "EGIE3", "WEGE3", "PRIO3"]
+lista_base = ["PETR4", "VALE3", "ITUB4", "BBAS3", "B3SA3", "EGIE3", "WEGE3", "PRIO3", "JBSS3"]
 
 busca_direta = st.sidebar.text_input("🔍 Busca Rápida (ex: PETR4)").upper().strip()
 tickers_para_processar = [busca_direta] if busca_direta else lista_base
@@ -173,7 +169,7 @@ with tab1:
         df = pd.DataFrame(dados_vencedoras)
         st.dataframe(df[["Ticker", "Preço", "DY %", "Veredito"]], use_container_width=True, hide_index=True)
     else:
-        st.info("Nenhum ativo encontrado. Tente digitar PETR4 na busca direta.")
+        st.info("Nenhum ativo encontrado. Tente digitar PETR4 na busca.")
 
 # ===================== TAB 3 - FUNDAMENTALISTA =====================
 with tab3:
@@ -191,4 +187,4 @@ with tab3:
     else:
         st.info("Nenhum ativo encontrado.")
 
-st.info("💡 Digite um ticker (ex: PETR4) na busca direta para testar.")
+st.info("💡 Digite PETR4 na busca rápida para testar.")
