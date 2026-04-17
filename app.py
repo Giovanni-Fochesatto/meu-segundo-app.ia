@@ -166,7 +166,7 @@ def obter_macro():
     macro["Focus_PIB_2026"] = "1.85%"
     return macro
 
-# ===================== CACHE DE MERCADO =====================
+# ===================== CACHE =====================
 @st.cache_data(ttl=300, show_spinner=False)
 def obter_indices():
     indices = {"Ibovespa": "^BVSP", "Nasdaq": "^IXIC", "Dow Jones": "^DJI"}
@@ -184,7 +184,6 @@ def obter_indices():
         except:
             resultados[nome] = (0.0, 0.0)
     return resultados
-
 
 @st.cache_data(ttl=90, show_spinner=False)
 def obter_cambio():
@@ -205,7 +204,6 @@ def obter_cambio():
         except:
             resultados[nome] = (0.0, 0.0)
 
-    # Bitcoin
     btc_real = 0.0
     try:
         t = yf.Ticker("BTC-BRL")
@@ -224,7 +222,6 @@ def obter_cambio():
             pass
     resultados["Bitcoin"] = (btc_real, 0.0)
     return resultados
-
 
 # ===================== DOWNLOAD EM BATCH =====================
 @st.cache_data(ttl=600, show_spinner=False)
@@ -312,7 +309,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
         else:
             veredito, cor = "NEUTRO ⚖️", "warning"
             motivo_detalhe = "Ativo próximo ao justo."
-    else:  # Análise Técnica
+    else:
         if rsi_val > 72 and score_n > score_p:
             veredito, cor = "VENDA FORTE 🚨", "error"
             motivo_detalhe = f"Sobrecompra extrema (RSI {rsi_val:.1f})."
@@ -379,7 +376,7 @@ col4.metric("Bitcoin", f"R$ {cambio['Bitcoin'][0]:,.0f}", f"{cambio['Bitcoin'][1
 
 st.sidebar.divider()
 
-# ===================== MACRO & CENÁRIO =====================
+# Macro
 st.sidebar.subheader("📊 Macro & Cenário")
 macro = obter_macro()
 st.sidebar.metric("Selic Atual", f"{macro['Selic']:.2f}%")
@@ -394,12 +391,9 @@ with st.sidebar.expander("📌 Impacto no Mercado", expanded=True):
     """)
     st.markdown(f"**Último Focus ({macro['Focus_Data']})**")
     st.markdown(f"- Selic 2026: **{macro['Focus_Selic_2026']}**")
-    st.markdown(f"- IPCA 2026: **{macro['Focus_IPCA_2026']}**")
-    st.markdown(f"- PIB 2026: **{macro['Focus_PIB_2026']}**")
 
 st.sidebar.divider()
 
-# ===================== MENU =====================
 mercado_selecionado = st.sidebar.radio("Mercado:", ["Brasil", "EUA"], on_change=ativar_filtros)
 
 estrategia_ativa = st.sidebar.selectbox(
@@ -515,7 +509,7 @@ with tab2:
 
             fig.update_layout(template="plotly_dark", height=600, 
                               xaxis_rangeslider_visible=False, showlegend=True)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key=f"chart_{acao['Ticker']}")
 
             c1, c2, c3 = st.columns(3)
             c1.metric("Preço Atual", f"{moeda_simbolo} {acao['Preço']:.2f}")
@@ -548,4 +542,5 @@ with tab4:
     st.info("Em desenvolvimento — Aqui virá o histórico de performance da IA ao longo do tempo.")
 
 # ===================== FIM =====================
-st.info("💡 Use os filtros ou faça uma busca direta para começar.")
+else:
+    st.info("💡 Use os filtros ou faça uma busca direta para começar.")
