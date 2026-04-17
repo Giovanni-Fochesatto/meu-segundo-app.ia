@@ -165,7 +165,7 @@ def obter_cambio():
         except:
             resultados[nome] = (0.0, 0.0)
 
-    # Bitcoin
+    # Bitcoin em Real
     btc_real = 0.0
     try:
         t = yf.Ticker("BTC-BRL")
@@ -255,7 +255,6 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
 
     sim = simular_performance_historica(hist)
 
-    # Lógica de veredito
     if estrategia_ativa == "Value Investing (Graham/Buffett)":
         if upside > 20 and score_value >= 3:
             veredito, cor = "VALOR ✅", "success"
@@ -357,42 +356,31 @@ st.sidebar.divider()
 
 # ===================== ANÁLISE FUNDAMENTALISTA =====================
 st.sidebar.subheader("📉 Análise Fundamentalista")
-with st.sidebar.expander("Indicadores Chave", expanded=False):
+with st.sidebar.expander("Indicadores Chave", expanded=True):
     st.markdown("""
     **Eficiência e Rentabilidade:**
-    - **ROE**: Retorno sobre o Patrimônio
-    - **Margem Líquida**: Lucro Líquido / Receita
-    - **Margem EBITDA**: Eficiência operacional
+    - **ROE** — Retorno sobre o Patrimônio
+    - **Margem Líquida** — Lucro Líquido / Receita
+    - **Margem EBITDA** — Eficiência operacional
 
     **Valuation:**
-    - **P/L**: Preço sobre Lucro
-    - **P/VP**: Preço sobre Valor Patrimonial
+    - **P/L** — Preço sobre Lucro
+    - **P/VP** — Preço sobre Valor Patrimonial
 
     **Endividamento:**
-    - **Dívida Líquida / EBITDA**: Alavancagem financeira
+    - **Dívida Líquida / EBITDA** — Nível de alavancagem
     """)
 
 st.sidebar.divider()
 
 # ===================== GESTÃO DE RISCO =====================
 st.sidebar.subheader("🛡️ Gestão de Risco e Portfólio")
-with st.sidebar.expander("Estratégias Recomendadas", expanded=False):
+with st.sidebar.expander("Estratégias Recomendadas", expanded=True):
     st.markdown("""
     - **Alocação de Ativos**: Rebalancear carteira conforme risco e valorização
-    - **Análise Técnica**: Definir pontos de entrada/saída com suporte e resistência
+    - **Análise Técnica**: Definir pontos de entrada e saída com suporte/resistência
     - **Gestão de Risco**: Stop-loss, diversificação e controle de exposição
     """)
-
-st.sidebar.divider()
-
-# ===================== FERRAMENTAS =====================
-st.sidebar.subheader("🔧 Ferramentas e Fontes")
-st.sidebar.markdown("""
-- **Status Invest**  
-- **Investidor10**  
-- **TradingView**  
-- **Relatórios**: XP, BB, BTG, Itaú, Santander
-""")
 
 st.sidebar.divider()
 
