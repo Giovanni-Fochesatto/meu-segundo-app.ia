@@ -7,7 +7,9 @@ import feedparser
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from streamlit_autorefresh import st_autorefresh
-import requests  # ← Adicionado para Telegram
+import requests
+import sqlite3
+import datetime
 
 # ===================== CONFIGURAÇÕES =====================
 st.set_page_config(page_title="Monitor IA Pro", layout="wide")
@@ -21,6 +23,38 @@ if "ultimos_alertas" not in st.session_state:
 
 def ativar_filtros():
     st.session_state.filtros_ativos = True
+
+# ===================== BANCO DE DADOS (PASSO 4) =====================
+def init_db():
+    conn = sqlite3.connect('sinais_ia.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS sinais (
+                    data TEXT,
+                    ticker TEXT,
+                    empresa TEXT,
+                    preco REAL,
+                    veredito TEXT,
+                    motivo TEXT,
+                    value_score INTEGER,
+                    expectancy REAL,
+                    sharpe REAL
+                )''')
+    conn.commit()
+    conn.close()
+
+def salvar_sinal(acao):
+    init_db()
+    conn = sqlite3.connect('sinais_ia.db')
+    c = conn.cursor()
+    agora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute('''INSERT INTO sinais 
+                 (data, ticker, empresa, preco, veredito, motivo, value_score, expectancy, sharpe)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+              (agora, acao['Ticker'], acao['Empresa'], acao['Preço'],
+               acao['Veredito'], acao['Motivo'], acao.get('ValueScore', 0),
+               acao.get('ExpectancyCompra', 0), acao.get('SharpeCompra', 0)))
+    conn.commit()
+    conn.close()
 
 # ===================== FUNÇÕES TÉCNICAS =====================
 def calcular_graham(lpa, vpa):
@@ -85,7 +119,6 @@ def simular_performance_historica(hist, min_volume=50000):
         (rsi > 70) & ((close < sma200) | (macd < sinal_macd)) &
         retorno_15d.notna() & liquid_mask
     )
-    # Compras
     if buy_mask.any():
         ret_buy = retorno_15d[buy_mask]
         qtd_c = int(buy_mask.sum())
@@ -103,7 +136,6 @@ def simular_performance_historica(hist, min_volume=50000):
     else:
         taxa_c = ret_med_c = expectancy_c = sharpe_c = sortino_c = 0.0
         qtd_c = 0
-    # Vendas
     if sell_mask.any():
         ret_sell = retorno_15d[sell_mask]
         qtd_v = int(sell_mask.sum())
@@ -121,7 +153,6 @@ def simular_performance_historica(hist, min_volume=50000):
     else:
         taxa_v = ret_med_v = expectancy_v = sharpe_v = sortino_v = 0.0
         qtd_v = 0
-    # Max Drawdown
     if len(close) > 10:
         cum_ret = close.pct_change().cumsum()
         peak = cum_ret.cummax()
@@ -252,7 +283,6 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
     p_justo = calcular_graham(lpa, vpa)
     p_atual = float(hist["Close"].iloc[-1]) if not hist.empty else 0
     upside = ((p_justo / p_atual) - 1) * 100 if p_justo > 0 and p_atual > 0 else 0.0
-    # Notícias
     noticias_texto = ""
     lista_links = []
     try:
@@ -270,7 +300,6 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
     rsi_val = calcular_rsi(hist["Close"])
     score_value, criteria = calcular_score_value(info)
     sim = simular_performance_historica(hist)
-    # Lógica de veredito
     if estrategia_ativa == "Value Investing (Graham/Buffett)":
         if upside > 25 and score_value >= 3 and div_e < 2.5:
             veredito, cor = "VALOR FORTE ✅", "success"
@@ -358,15 +387,13 @@ with st.sidebar.expander("📌 Impacto no Mercado", expanded=True):
     st.markdown(f"- Selic 2026: **{macro['Focus_Selic_2026']}**")
 st.sidebar.divider()
 
-# ===================== NOVO: PASSO 3 - ALERTAS TELEGRAM =====================
-with st.sidebar.expander("🔔 Alertas Telegram (Passo 3)", expanded=False):
-    bot_token = st.text_input("Bot Token (Telegram)", type="password", help="Crie um bot no @BotFather")
-    chat_id = st.text_input("Chat ID", help="Seu ID ou ID do canal/grupo")
+# ===================== ALERTAS TELEGRAM =====================
+with st.sidebar.expander("🔔 Alertas Telegram", expanded=False):
+    bot_token = st.text_input("Bot Token (Telegram)", type="password")
+    chat_id = st.text_input("Chat ID")
     if st.button("✅ Ativar Alertas Telegram"):
         st.session_state.telegram_ativado = True
         st.success("Alertas ativados!")
-    if st.session_state.telegram_ativado:
-        st.caption("✅ Alertas Telegram ativados")
 
 mercado_selecionado = st.sidebar.radio("Mercado:", ["Brasil", "EUA"], on_change=ativar_filtros)
 estrategia_ativa = st.sidebar.selectbox(
@@ -414,19 +441,7 @@ if tickers_para_processar:
         )
         if resultado:
             dados_vencedoras.append(resultado)
-
-# ===================== ALERTAS TELEGRAM (Passo 3) =====================
-if st.session_state.telegram_ativado and bot_token and chat_id:
-    for acao in dados_vencedoras:
-        sinal_key = f"{acao['Ticker']}_{acao['Veredito']}"
-        if sinal_key not in st.session_state.ultimos_alertas and ("COMPRA" in acao["Veredito"] or "VENDA" in acao["Veredito"] or "FORTE" in acao["Veredito"]):
-            mensagem = f"🚨 SINAL IA\n\n{acao['Ticker']} - {acao['Veredito']}\nPreço: {moeda_simbolo} {acao['Preço']:.2f}\nMotivo: {acao['Motivo']}\n\n📊 Value Score: {acao.get('ValueScore', 0)}/4"
-            try:
-                requests.get(f"https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={chat_id}&text={mensagem}")
-                st.session_state.ultimos_alertas.add(sinal_key)
-                st.toast(f"✅ Alerta enviado: {acao['Ticker']}", icon="🔔")
-            except:
-                pass
+            salvar_sinal(resultado)   # ← Passo 4: salva no banco
 
 # ===================== TAB 1 - OVERVIEW =====================
 with tab1:
@@ -451,7 +466,7 @@ with tab1:
     else:
         st.info("Nenhum ativo encontrado com os filtros atuais.")
 
-# ===================== TAB 2 - GRÁFICO TÉCNICO =====================
+# ===================== TAB 2 - GRÁFICO TÉCNICO (melhorado) =====================
 with tab2:
     st.subheader("📈 Gráfico Técnico")
     if dados_vencedoras:
@@ -508,9 +523,9 @@ with tab3:
     else:
         st.info("Nenhum ativo encontrado.")
 
-# ===================== TAB 4 - BACKTEST =====================
+# ===================== TAB 4 - BACKTEST + PASSO 4 =====================
 with tab4:
-    st.subheader("📜 Backtest & Estatísticas")
+    st.subheader("📜 Backtest & Performance da IA")
     if dados_vencedoras:
         df = pd.DataFrame(dados_vencedoras)
         col1, col2, col3, col4 = st.columns(4)
@@ -526,5 +541,17 @@ with tab4:
     else:
         st.info("Execute uma análise para ver estatísticas de backtest.")
 
-# ===================== FIM =====================
+    # === HISTÓRICO DO BANCO (Passo 4) ===
+    st.subheader("📊 Histórico de Sinais Salvos")
+    conn = sqlite3.connect('sinais_ia.db')
+    df_historico = pd.read_sql("SELECT * FROM sinais ORDER BY data DESC", conn)
+    conn.close()
+    if not df_historico.empty:
+        st.dataframe(df_historico, use_container_width=True, hide_index=True)
+        if st.button("📤 Exportar Histórico para CSV"):
+            csv = df_historico.to_csv(index=False)
+            st.download_button("Baixar CSV", csv, "historico_sinais_ia.csv", "text/csv")
+    else:
+        st.info("Ainda não há sinais salvos.")
+
 st.info("💡 Use os filtros ou faça uma busca direta para começar.")
