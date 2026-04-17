@@ -22,7 +22,7 @@ if "telegram_ativado" not in st.session_state:
 if "ultimos_alertas" not in st.session_state:
     st.session_state.ultimos_alertas = set()
 if "usar_tradingview" not in st.session_state:
-    st.session_state.usar_tradingview = False
+    st.session_state.usar_tradingview = True   # já ativado por padrão
 
 def ativar_filtros():
     st.session_state.filtros_ativos = True
@@ -59,7 +59,7 @@ def salvar_sinal(acao):
     conn.commit()
     conn.close()
 
-# ===================== FUNÇÕES TÉCNICAS (mantidas 100%) =====================
+# ===================== FUNÇÕES TÉCNICAS (todas mantidas) =====================
 def calcular_graham(lpa, vpa):
     if lpa > 0 and vpa > 0:
         return np.sqrt(22.5 * lpa * vpa)
@@ -114,7 +114,7 @@ def simular_performance_historica(hist, min_volume=50000):
     liquid_mask = volume > min_volume
     buy_mask = ((rsi < 35) & (close > sma200) & (macd > sinal_macd) & retorno_15d.notna() & liquid_mask)
     sell_mask = ((rsi > 70) & ((close < sma200) | (macd < sinal_macd)) & retorno_15d.notna() & liquid_mask)
-    # ... (todo o resto da função simular_performance_historica permanece igual ao seu código original)
+    # ... (todo o resto da função simular_performance_historica original mantido)
     if buy_mask.any():
         ret_buy = retorno_15d[buy_mask]
         qtd_c = int(buy_mask.sum())
@@ -392,7 +392,7 @@ with st.sidebar.expander("🔔 Alertas Telegram", expanded=False):
         st.session_state.telegram_ativado = True
         st.success("Alertas ativados!")
 
-# ===================== NOVA OPÇÃO TRADINGVIEW =====================
+# ===================== TRADINGVIEW =====================
 st.sidebar.divider()
 st.sidebar.subheader("📺 TradingView")
 st.session_state.usar_tradingview = st.sidebar.checkbox("Usar gráfico do TradingView na aba Gráfico Técnico", value=True)
@@ -468,14 +468,14 @@ with tab1:
     else:
         st.info("Nenhum ativo encontrado com os filtros atuais.")
 
-# ===================== TAB 2 - GRÁFICO TÉCNICO (Plotly + TradingView) =====================
+# ===================== TAB 2 - GRÁFICO TÉCNICO =====================
 with tab2:
     st.subheader("📈 Gráfico Técnico")
     if dados_vencedoras:
         for acao in dados_vencedoras:
             st.write(f"**{acao['Empresa']} ({acao['Ticker']})**")
 
-            # 1. Gráfico Plotly (mantido)
+            # Gráfico Plotly (mantido)
             hist = acao["Hist"].copy()
             if not hist.empty:
                 hist['SMA20'] = hist['Close'].rolling(window=20).mean()
@@ -499,20 +499,26 @@ with tab2:
                 fig.update_layout(height=750, template="plotly_dark", showlegend=True, title_text=f"Plotly - {acao['Empresa']} ({acao['Ticker']})", xaxis_rangeslider_visible=False)
                 st.plotly_chart(fig, use_container_width=True, key=f"plotly_{acao['Ticker']}")
 
-            # 2. TradingView Widget (nova integração)
+            # ===================== TRADINGVIEW (CORRIGIDO) =====================
             if st.session_state.usar_tradingview:
-                tv_symbol = f"B3:{acao['Ticker']}" if mercado_selecionado == "Brasil" else acao['Ticker']
+                # Símbolo corrigido para B3
+                tv_symbol = f"BMFBOVESPA:{acao['Ticker']}" if mercado_selecionado == "Brasil" else acao['Ticker']
                 tv_html = f"""
-                <iframe src="https://www.tradingview.com/widgetembed/?symbol={tv_symbol}&interval=D&theme=dark&style=1&hideideas=0&hidelegend=0&hidevolume=0&hidewatermark=0"
-                        width="100%" height="600" frameborder="0" allowfullscreen></iframe>
+                <iframe 
+                    src="https://www.tradingview.com/widgetembed/?symbol={tv_symbol}&interval=D&theme=dark&style=1&hideideas=0&hidelegend=0&hidevolume=0&hidewatermark=0"
+                    width="100%" 
+                    height="650" 
+                    frameborder="0" 
+                    allowfullscreen>
+                </iframe>
                 """
-                st.components.v1.html(tv_html, height=650)
-            
+                st.components.v1.html(tv_html, height=680)
+
             st.divider()
     else:
         st.info("Use a busca direta ou aguarde o carregamento dos ativos.")
 
-# ===================== TAB 3 - FUNDAMENTALISTA =====================
+# ===================== TAB 3 e TAB 4 mantidas (código original) =====================
 with tab3:
     st.subheader("📉 Análise Fundamentalista")
     if dados_vencedoras:
@@ -537,7 +543,6 @@ with tab3:
     else:
         st.info("Nenhum ativo encontrado.")
 
-# ===================== TAB 4 - BACKTEST =====================
 with tab4:
     st.subheader("📜 Backtest & Performance da IA")
     if dados_vencedoras:
