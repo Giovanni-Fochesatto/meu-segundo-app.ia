@@ -44,19 +44,19 @@ def calcular_score_value(info):
     criteria = []
     if 0 < info.get("trailingPE", 99) < 15:
         score += 1
-        criteria.append("P/L baixo")
+        criteria.append("P/L < 15")
     if 0 < info.get("priceToBook", 99) < 1.5:
         score += 1
-        criteria.append("P/VP baixo")
+        criteria.append("P/VP < 1.5")
     if (info.get("dividendYield", 0) or 0) * 100 > 5:
         score += 1
-        criteria.append("DY alto")
+        criteria.append("DY > 5%")
     if (info.get("operatingMargins", 0) or 0) > 0.1:
         score += 1
-        criteria.append("Margem boa")
+        criteria.append("Margem Operacional > 10%")
     return score, criteria
 
-# ===================== SIMULAÇÃO PROFISSIONAL =====================
+# ===================== SIMULAÇÃO PROFISSIONAL (mantida igual) =====================
 def simular_performance_historica(hist, min_volume=50000):
     if len(hist) < 300:
         return {
@@ -103,7 +103,7 @@ def simular_performance_historica(hist, min_volume=50000):
     else:
         taxa_c = ret_med_c = expectancy_c = sharpe_c = sortino_c = 0.0
         qtd_c = 0
-    # Vendas
+    # Vendas (mantida)
     if sell_mask.any():
         ret_sell = retorno_15d[sell_mask]
         qtd_v = int(sell_mask.sum())
@@ -255,11 +255,13 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
     lpa = info.get("trailingEps", 0) or 0
     vpa = info.get("bookValue", 0) or 0
     p_justo = calcular_graham(lpa, vpa)
-    p_atual = float(hist["Close"].iloc[-1])
-    upside = ((p_justo / p_atual) - 1) * 100 if p_justo > 0 else 0.0
+    p_atual = float(hist["Close"].iloc[-1]) if not hist.empty else 0
+    upside = ((p_justo / p_atual) - 1) * 100 if p_justo > 0 and p_atual > 0 else 0.0
+
     if not busca_direta and filtros_ativos:
         if not (pl <= f_pl and pvp <= f_pvp and dy >= f_dy and div_e <= f_div_ebitda):
             return None
+
     # Notícias
     noticias_texto = ""
     lista_links = []
@@ -273,11 +275,14 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
             lista_links.append({"titulo": entry.title, "link": entry.link})
     except:
         pass
+
     score_p = sum(noticias_texto.count(w) for w in ["alta", "lucro", "compra", "subiu", "dividend", "profit", "buy"])
     score_n = sum(noticias_texto.count(w) for w in ["queda", "prejuízo", "venda", "caiu", "risk", "loss", "sell"])
+
     rsi_val = calcular_rsi(hist["Close"])
     score_value, criteria = calcular_score_value(info)
     sim = simular_performance_historica(hist)
+
     # Lógica de veredito
     if estrategia_ativa == "Value Investing (Graham/Buffett)":
         if upside > 25 and score_value >= 3 and div_e < 2.5:
@@ -308,6 +313,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
         else:
             veredito, cor = "CAUTELA ⚠️", "warning"
             motivo_detalhe = "Sem sinal claro de direção."
+
     return {
         "Ticker": tkr,
         "Empresa": info.get("shortName", tkr),
@@ -324,7 +330,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
         "Hist": hist,
         "Links": lista_links,
         "ValueScore": score_value,
-        "ValueCriteria": criteria,   # Novo: detalhe dos critérios
+        "ValueCriteria": criteria,
         "TaxaCompra": sim["taxa_compra"],
         "TaxaVenda": sim["taxa_venda"],
         "RetornoMedioCompra": sim["retorno_medio_compra"],
@@ -419,8 +425,7 @@ with tab1:
     if dados_vencedoras:
         st.subheader(f"🏆 Ranking - Estratégia: {estrategia_ativa}")
         df_resumo = pd.DataFrame(dados_vencedoras)
-        # Filtro simples para reduzir zeros
-        df_resumo = df_resumo[df_resumo["Preço"] > 1]
+        # Removido filtro agressivo - mostra todas as ações processadas
         df_resumo = df_resumo[["Ticker", "Preço", "DY %", "Upside %", "Veredito", "Motivo",
                                "TaxaCompra", "ExpectancyCompra", "SharpeCompra", "QtdCompra"]]
         st.dataframe(
@@ -477,7 +482,7 @@ with tab2:
     else:
         st.info("Nenhum ativo para exibir no gráfico.")
 
-# ===================== TAB 3 - FUNDAMENTALISTA (Value Score detalhado + Links) =====================
+# ===================== TAB 3 - FUNDAMENTALISTA =====================
 with tab3:
     st.subheader("📉 Análise Fundamentalista")
     if dados_vencedoras:
@@ -495,9 +500,9 @@ with tab3:
             st.markdown(f"**Value Score: {score}/4**")
             st.progress(score / 4)
             if criteria:
-                st.caption("Critérios atendidos: " + " • ".join(criteria))
+                st.caption("Critérios: " + " • ".join(criteria))
             else:
-                st.caption("Nenhum critério de Value Score atendido")
+                st.caption("Nenhum critério atendido")
 
             # Links das manchetes
             if acao.get("Links"):
