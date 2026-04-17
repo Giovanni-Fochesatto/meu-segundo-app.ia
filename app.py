@@ -399,7 +399,7 @@ with st.sidebar.expander("📌 Impacto no Mercado", expanded=True):
 
 st.sidebar.divider()
 
-# ===================== MENU PRINCIPAL =====================
+# ===================== MENU =====================
 mercado_selecionado = st.sidebar.radio("Mercado:", ["Brasil", "EUA"], on_change=ativar_filtros)
 
 estrategia_ativa = st.sidebar.selectbox(
@@ -533,7 +533,7 @@ with tab3:
             st.write(f"**{acao['Empresa']} ({acao['Ticker']})**")
             col1, col2, col3 = st.columns(3)
             col1.metric("P/L", round(acao["P/L"], 2))
-            col2.metric("P/VP", round(acao.get("P/VP", pvp), 2))
+            col2.metric("P/VP", round(acao.get("P/VP", 0), 2))
             col3.metric("DY", f"{acao['DY %']:.2f}%")
             st.metric("Dívida Líquida / EBITDA", round(acao["Dívida"], 2))
             st.progress(acao["ValueScore"] / 4)
@@ -547,5 +547,5 @@ with tab4:
     st.subheader("📜 Backtest & Estatísticas")
     st.info("Em desenvolvimento — Aqui virá o histórico de performance da IA ao longo do tempo.")
 
-else:
-    st.info("💡 Use os filtros ou faça uma busca direta para começar.")
+# ===================== FIM =====================
+st.info("💡 Use os filtros ou faça uma busca direta para começar.")
