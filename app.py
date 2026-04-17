@@ -1,13 +1,3 @@
- pip install -U streamlit yfinance pandas numpy feedparser streamlit-autorefresh
-    streamlit run monitor_ia_pro.py
-"""
-
-from __future__ import annotations
-
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
-
 import feedparser
 import numpy as np
 import pandas as pd
