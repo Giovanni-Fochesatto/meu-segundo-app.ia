@@ -15,11 +15,15 @@ st_autorefresh(interval=300 * 1000, key="data_refresh")
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
+# ✅ INICIALIZAR ESTADO CORRETO
 if "filtros_ativos" not in st.session_state:
     st.session_state.filtros_ativos = False
+if "filtro_expandido" not in st.session_state:
+    st.session_state.filtro_expandido = False
 
 def ativar_filtros():
-    st.session_state.filtros_ativos = True
+    """Ativar filtros apenas quando o usuário clica em 'Resetar' ou muda de mercado"""
+    st.session_state.filtros_ativos = st.session_state.filtro_expandido
 
 # ===================== FUNÇÕES AUXILIARES =====================
 def safe_divide(numerador: float, denominador: float, default: float = 0.0) -> float:
@@ -406,7 +410,7 @@ def processar_ativo(
         else:
             upside = ((p_justo / p_atual) - 1) * 100 if p_atual > 0 else 0.0
         
-        # ✅ APLICAR FILTROS CORRETAMENTE
+        # ✅ APLICAR FILTROS APENAS SE REALMENTE ATIVADOS
         if not busca_direta and filtros_ativos:
             # Usar valores seguros para comparação
             if pl > 0:
@@ -584,7 +588,7 @@ st.sidebar.divider()
 
 # ===================== RESTO DO SIDEBAR =====================
 mercado_selecionado = st.sidebar.radio(
-    "Escolha o Mercado:", ["Brasil", "EUA"], on_change=ativar_filtros
+    "Escolha o Mercado:", ["Brasil", "EUA"]
 )
 
 estrategia_ativa = st.sidebar.selectbox(
@@ -593,13 +597,19 @@ estrategia_ativa = st.sidebar.selectbox(
 
 busca_direta = st.sidebar.text_input(f"🔍 Busca Rápida ({mercado_selecionado}):").upper().strip()
 
+# ✅ EXPANDER DESMONTADO POR PADRÃO E NÃO ATIVA FILTRO AUTOMATICAMENTE
 with st.sidebar.expander("📊 Filtros de Valuation", expanded=False):
-    f_pl = st.slider("P/L Máximo", 0.0, 50.0, 50.0, step=0.5, on_change=ativar_filtros)
-    f_pvp = st.slider("P/VP Máximo", 0.0, 10.0, 10.0, step=0.1, on_change=ativar_filtros)
-    f_dy = st.slider("DY Mínimo (%)", 0.0, 20.0, 0.0, step=0.5, on_change=ativar_filtros)
-    f_div_ebitda = st.slider("Dív.Líq/EBITDA Máximo", 0.0, 15.0, 15.0, step=0.5, on_change=ativar_filtros)
+    f_pl = st.slider("P/L Máximo", 0.0, 50.0, 50.0, step=0.5)
+    f_pvp = st.slider("P/VP Máximo", 0.0, 10.0, 10.0, step=0.1)
+    f_dy = st.slider("DY Mínimo (%)", 0.0, 20.0, 0.0, step=0.5)
+    f_div_ebitda = st.slider("Dív.Líq/EBITDA Máximo", 0.0, 15.0, 15.0, step=0.5)
+    
+    # ✅ BOTÃO DENTRO DO EXPANDER PARA APLICAR FILTROS
+    if st.button("✅ Aplicar Filtros"):
+        st.session_state.filtros_ativos = True
+        st.rerun()
 
-if st.sidebar.button("Resetar Filtros"):
+if st.sidebar.button("🔄 Resetar Filtros"):
     st.session_state.filtros_ativos = False
     st.rerun()
 
@@ -713,6 +723,6 @@ else:
     if busca_direta:
         st.warning(f"⚠️ Nenhum resultado encontrado para '{busca_direta}'. Verifique o ticker.")
     elif st.session_state.filtros_ativos:
-        st.info("💡 Nenhum ativo atende aos critérios de filtro. Ajuste os valores para valores menores (P/L, P/VP, Dívida) ou maiores (DY).")
+        st.info("💡 Nenhum ativo atende aos critérios de filtro. Abra os filtros e **clique em 'Aplicar Filtros'** com valores menos restritivos.")
     else:
-        st.info("💡 Clique nos filtros para filtrar ativos ou faça uma busca direta digitando um ticker.")
+        st.info("💡 Selecione uma estratégia acima e aguarde o carregamento dos dados. Também pode fazer uma busca direta digitando um ticker!")
