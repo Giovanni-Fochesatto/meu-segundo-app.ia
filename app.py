@@ -7,23 +7,18 @@ import feedparser
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from streamlit_autorefresh import st_autorefresh
-
 # ===================== CONFIGURAÇÕES =====================
 st.set_page_config(page_title="Monitor IA Pro", layout="wide")
-st_autorefresh(interval=300000, key="data_refresh")
-
+st_autorefresh(interval=300 * 1000, key="data_refresh")
 if "filtros_ativos" not in st.session_state:
     st.session_state.filtros_ativos = False
-
 def ativar_filtros():
     st.session_state.filtros_ativos = True
-
 # ===================== FUNÇÕES TÉCNICAS =====================
 def calcular_graham(lpa, vpa):
     if lpa > 0 and vpa > 0:
         return np.sqrt(22.5 * lpa * vpa)
     return 0.0
-
 def calcular_rsi_series(close: pd.Series, window: int = 14) -> pd.Series:
     if len(close) < window:
         return pd.Series([50.0] * len(close), index=close.index)
@@ -33,7 +28,10 @@ def calcular_rsi_series(close: pd.Series, window: int = 14) -> pd.Series:
     rs = gain / loss.where(loss != 0, np.nan)
     rsi = 100 - (100 / (1 + rs))
     return rsi.fillna(50)
-
+def calcular_rsi(data, window: int = 14):
+    if len(data) < window:
+        return 50.0
+    return float(calcular_rsi_series(data, window).iloc[-1])
 def calcular_score_value(info):
     score = 0
     criteria = []
@@ -50,10 +48,17 @@ def calcular_score_value(info):
         score += 1
         criteria.append("Margem boa")
     return score, criteria
-
+# ===================== SIMULAÇÃO =====================
 def simular_performance_historica(hist, min_volume=50000):
     if len(hist) < 300:
-        return {"expectancy_compra": 0.0, "sharpe_compra": 0.0, "qtd_compra": 0}
+        return {
+            "taxa_compra": 0.0, "taxa_venda": 0.0,
+            "retorno_medio_compra": 0.0, "retorno_medio_venda": 0.0,
+            "expectancy_compra": 0.0, "expectancy_venda": 0.0,
+            "sharpe_compra": 0.0, "sortino_compra": 0.0,
+            "max_drawdown": 0.0,
+            "qtd_compra": 0, "qtd_venda": 0
+        }
     close = hist["Close"].copy()
     volume = hist.get("Volume", pd.Series(0, index=close.index))
     rsi = calcular_rsi_series(close)
@@ -64,26 +69,81 @@ def simular_performance_historica(hist, min_volume=50000):
     sinal_macd = macd.ewm(span=9, adjust=False).mean()
     retorno_15d = close.shift(-15) / close - 1
     liquid_mask = volume > min_volume
-    buy_mask = (rsi < 35) & (close > sma200) & (macd > sinal_macd) & retorno_15d.notna() & liquid_mask
+    buy_mask = (
+        (rsi < 35) & (close > sma200) & (macd > sinal_macd) &
+        retorno_15d.notna() & liquid_mask
+    )
+    sell_mask = (
+        (rsi > 70) & ((close < sma200) | (macd < sinal_macd)) &
+        retorno_15d.notna() & liquid_mask
+    )
+    # Compras
     if buy_mask.any():
         ret_buy = retorno_15d[buy_mask]
-        expectancy = ret_buy.mean() * 100
-        sharpe = ret_buy.mean() / ret_buy.std() * np.sqrt(252) if ret_buy.std() != 0 else 0
-        qtd = int(buy_mask.sum())
+        qtd_c = int(buy_mask.sum())
+        taxa_c = (ret_buy > 0).mean() * 100
+        ret_med_c = ret_buy.mean() * 100
+        wins = ret_buy[ret_buy > 0]
+        losses = ret_buy[ret_buy < 0]
+        avg_win = wins.mean() if not wins.empty else 0
+        avg_loss = abs(losses.mean()) if not losses.empty else 0
+        expectancy_c = (taxa_c/100 * avg_win) - ((1 - taxa_c/100) * avg_loss) * 100
+        returns = ret_buy.dropna()
+        sharpe_c = returns.mean() / returns.std() * np.sqrt(252) if len(returns) > 5 and returns.std() != 0 else 0
+        downside = returns[returns < 0]
+        sortino_c = returns.mean() / downside.std() * np.sqrt(252) if len(downside) > 5 and downside.std() != 0 else 0
     else:
-        expectancy = sharpe = 0.0
-        qtd = 0
-    return {"expectancy_compra": expectancy, "sharpe_compra": sharpe, "qtd_compra": qtd}
-
+        taxa_c = ret_med_c = expectancy_c = sharpe_c = sortino_c = 0.0
+        qtd_c = 0
+    # Vendas
+    if sell_mask.any():
+        ret_sell = retorno_15d[sell_mask]
+        qtd_v = int(sell_mask.sum())
+        taxa_v = (ret_sell < 0).mean() * 100
+        ret_med_v = ret_sell.mean() * 100
+        wins_v = ret_sell[ret_sell < 0]
+        losses_v = ret_sell[ret_sell > 0]
+        avg_win_v = abs(wins_v.mean()) if not wins_v.empty else 0
+        avg_loss_v = losses_v.mean() if not losses_v.empty else 0
+        expectancy_v = (taxa_v/100 * avg_win_v) - ((1 - taxa_v/100) * avg_loss_v) * 100
+        returns_v = ret_sell.dropna()
+        sharpe_v = returns_v.mean() / returns_v.std() * np.sqrt(252) if len(returns_v) > 5 and returns_v.std() != 0 else 0
+        downside_v = returns_v[returns_v > 0]
+        sortino_v = returns_v.mean() / downside_v.std() * np.sqrt(252) if len(downside_v) > 5 and downside_v.std() != 0 else 0
+    else:
+        taxa_v = ret_med_v = expectancy_v = sharpe_v = sortino_v = 0.0
+        qtd_v = 0
+    # Max Drawdown
+    if len(close) > 10:
+        cum_ret = close.pct_change().cumsum()
+        peak = cum_ret.cummax()
+        drawdown = (cum_ret - peak) / peak
+        max_dd = drawdown.min() * 100
+    else:
+        max_dd = 0.0
+    return {
+        "taxa_compra": taxa_c,
+        "taxa_venda": taxa_v,
+        "retorno_medio_compra": ret_med_c,
+        "retorno_medio_venda": ret_med_v,
+        "expectancy_compra": expectancy_c,
+        "expectancy_venda": expectancy_v,
+        "sharpe_compra": sharpe_c,
+        "sortino_compra": sortino_c,
+        "max_drawdown": max_dd,
+        "qtd_compra": qtd_c,
+        "qtd_venda": qtd_v
+    }
 # ===================== CACHE =====================
 @st.cache_data(ttl=1800, show_spinner=False)
 def obter_macro():
     macro = {}
     try:
-        macro["Selic"] = 14.75
+        selic_data = yf.Ticker("^SELIC").history(period="5d")
+        macro["Selic"] = float(selic_data["Close"].iloc[-1]) if not selic_data.empty else 14.75
         macro["Dolar"] = yf.Ticker("USDBRL=X").fast_info.last_price
         macro["IPCA_12m"] = 4.14
-    except:
+    except Exception:
         macro["Selic"] = 14.75
         macro["Dolar"] = 4.99
         macro["IPCA_12m"] = 4.14
@@ -92,7 +152,6 @@ def obter_macro():
     macro["Focus_IPCA_2026"] = "4.36%"
     macro["Focus_PIB_2026"] = "1.85%"
     return macro
-
 @st.cache_data(ttl=300, show_spinner=False)
 def obter_indices():
     indices = {"Ibovespa": "^BVSP", "Nasdaq": "^IXIC", "Dow Jones": "^DJI"}
@@ -110,7 +169,6 @@ def obter_indices():
         except:
             resultados[nome] = (0.0, 0.0)
     return resultados
-
 @st.cache_data(ttl=90, show_spinner=False)
 def obter_cambio():
     moedas = {"Dólar": "USDBRL=X", "Euro": "EURBRL=X", "Libra": "GBPBRL=X"}
@@ -129,7 +187,6 @@ def obter_cambio():
             resultados[nome] = (atual, variacao)
         except:
             resultados[nome] = (0.0, 0.0)
-    # Bitcoin com fallback robusto
     btc_real = 0.0
     try:
         t = yf.Ticker("BTC-BRL")
@@ -145,10 +202,9 @@ def obter_cambio():
             dolar_brl = resultados.get("Dólar", (4.99, 0))[0]
             btc_real = btc_usd * dolar_brl
         except:
-            btc_real = 386000  # fallback aproximado
+            pass
     resultados["Bitcoin"] = (btc_real, 0.0)
     return resultados
-
 @st.cache_data(ttl=600, show_spinner=False)
 def obter_dados_batch(tickers, mercado):
     if not tickers:
@@ -165,17 +221,17 @@ def obter_dados_batch(tickers, mercado):
                 hist_dict[t_orig] = hist_multi
             else:
                 hist_dict[t_orig] = hist_multi[t_yf] if t_yf in hist_multi.columns.get_level_values(0) else pd.DataFrame()
-        except:
+        except Exception:
             info_dict[t_orig] = {}
             hist_dict[t_orig] = pd.DataFrame()
     return info_dict, hist_dict
-
-# ===================== PROCESSAMENTO =====================
-def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos, f_pl, f_pvp, f_dy, f_div_ebitda, busca_direta, mercado):
+# ===================== PROCESSAMENTO CENTRAL =====================
+def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
+                    f_pl, f_pvp, f_dy, f_div_ebitda, busca_direta, mercado):
     if hist.empty or not info:
         return None
-
     hist = hist.copy()
+    hist['SMA20'] = hist['Close'].rolling(window=20).mean()
     pl = info.get("trailingPE", 0) or 0
     pvp = info.get("priceToBook", 0) or 0
     dy = (info.get("dividendYield", 0) or 0) * 100
@@ -188,25 +244,58 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos, f_pl, f_p
     p_justo = calcular_graham(lpa, vpa)
     p_atual = float(hist["Close"].iloc[-1]) if not hist.empty else 0
     upside = ((p_justo / p_atual) - 1) * 100 if p_justo > 0 and p_atual > 0 else 0.0
-
+    # Filtro desativado temporariamente para evitar que as ações sumam
+    # if not busca_direta and filtros_ativos:
+    # if not (pl <= f_pl and pvp <= f_pvp and dy >= f_dy and div_e <= f_div_ebitda):
+    # return None
     # Notícias
+    noticias_texto = ""
     lista_links = []
     try:
         lang = "pt-BR" if mercado == "Brasil" else "en-US"
         url = f"https://news.google.com/rss/search?q={tkr}&hl={lang}"
         feed = feedparser.parse(url)
         for entry in feed.entries[:5]:
+            titulo = entry.title.lower()
+            noticias_texto += titulo + " "
             lista_links.append({"titulo": entry.title, "link": entry.link})
     except:
         pass
-
-    rsi_val = calcular_rsi_series(hist["Close"]).iloc[-1]
+    score_p = sum(noticias_texto.count(w) for w in ["alta", "lucro", "compra", "subiu", "dividend", "profit", "buy"])
+    score_n = sum(noticias_texto.count(w) for w in ["queda", "prejuízo", "venda", "caiu", "risk", "loss", "sell"])
+    rsi_val = calcular_rsi(hist["Close"])
     score_value, criteria = calcular_score_value(info)
     sim = simular_performance_historica(hist)
-
-    veredito = "VALOR ✅" if score_value >= 3 else "NEUTRO ⚖️"
-    motivo_detalhe = f"Value Score: {score_value}/4"
-
+    # Lógica de veredito
+    if estrategia_ativa == "Value Investing (Graham/Buffett)":
+        if upside > 25 and score_value >= 3 and div_e < 2.5:
+            veredito, cor = "VALOR FORTE ✅", "success"
+            motivo_detalhe = f"Excelente margem de segurança ({upside:.1f}%) + fundamentos sólidos."
+        elif upside > 15 and score_value >= 2:
+            veredito, cor = "VALOR ✅", "success"
+            motivo_detalhe = f"Boa margem de segurança ({upside:.1f}%)."
+        elif upside < -10:
+            veredito, cor = "CARO 🚨", "error"
+            motivo_detalhe = "Preço significativamente acima do valor intrínseco."
+        else:
+            veredito, cor = "NEUTRO ⚖️", "warning"
+            motivo_detalhe = "Ativo próximo ao justo."
+    else:
+        if rsi_val > 72 and score_n > score_p:
+            veredito, cor = "VENDA FORTE 🚨", "error"
+            motivo_detalhe = f"Sobrecompra extrema (RSI {rsi_val:.1f})."
+        elif rsi_val > 68:
+            veredito, cor = "VENDA 🚨", "error"
+            motivo_detalhe = f"RSI elevado ({rsi_val:.1f})."
+        elif score_p > score_n + 2 and rsi_val < 60:
+            veredito, cor = "COMPRA FORTE ✅", "success"
+            motivo_detalhe = f"Sentimento positivo + RSI saudável."
+        elif score_p > score_n and rsi_val < 65:
+            veredito, cor = "COMPRA ✅", "success"
+            motivo_detalhe = f"Notícias positivas e RSI favorável."
+        else:
+            veredito, cor = "CAUTELA ⚠️", "warning"
+            motivo_detalhe = "Sem sinal claro de direção."
     return {
         "Ticker": tkr,
         "Empresa": info.get("shortName", tkr),
@@ -217,25 +306,29 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos, f_pl, f_p
         "Graham": p_justo,
         "Upside %": upside,
         "Veredito": veredito,
+        "Cor": cor,
         "Motivo": motivo_detalhe,
         "RSI": rsi_val,
         "Hist": hist,
         "Links": lista_links,
         "ValueScore": score_value,
         "ValueCriteria": criteria,
+        "TaxaCompra": sim["taxa_compra"],
+        "TaxaVenda": sim["taxa_venda"],
+        "RetornoMedioCompra": sim["retorno_medio_compra"],
         "ExpectancyCompra": sim["expectancy_compra"],
         "SharpeCompra": sim["sharpe_compra"],
-        "QtdCompra": sim["qtd_compra"]
+        "SortinoCompra": sim["sortino_compra"],
+        "MaxDrawdown": sim["max_drawdown"],
+        "QtdCompra": sim["qtd_compra"],
+        "QtdVenda": sim["qtd_venda"]
     }
-
 # ===================== SIDEBAR =====================
 st.sidebar.title("🌎 Monitor IA Pro")
-
 st.sidebar.subheader("📈 Índices Mundiais")
 indices_data = obter_indices()
 for nome, (valor, var) in indices_data.items():
     st.sidebar.metric(nome, f"{valor:,.0f} pts", f"{var:.2f}%")
-
 st.sidebar.divider()
 st.sidebar.subheader("💱 Câmbio em Tempo Real")
 cambio = obter_cambio()
@@ -245,116 +338,160 @@ col2.metric("Euro", f"R$ {cambio['Euro'][0]:.2f}", f"{cambio['Euro'][1]:.2f}%")
 col3, col4 = st.sidebar.columns(2)
 col3.metric("Libra", f"R$ {cambio['Libra'][0]:.2f}", f"{cambio['Libra'][1]:.2f}%")
 col4.metric("Bitcoin", f"R$ {cambio['Bitcoin'][0]:,.0f}", f"{cambio['Bitcoin'][1]:.2f}%")
-
 st.sidebar.divider()
 st.sidebar.subheader("📊 Macro & Cenário")
 macro = obter_macro()
 st.sidebar.metric("Selic Atual", f"{macro['Selic']:.2f}%")
 st.sidebar.metric("IPCA 12m", f"{macro['IPCA_12m']:.2f}%")
-
+st.sidebar.metric("Dólar", f"R$ {macro['Dolar']:.2f}")
+with st.sidebar.expander("📌 Impacto no Mercado", expanded=True):
+    st.markdown("""
+    **Selic Alta** → Prejudica crescimento e empresas alavancadas
+    **Inflação Controlada** → Melhora margens de lucro
+    **Dólar Alto** → Favorece exportadoras
+    """)
+    st.markdown(f"**Último Focus ({macro['Focus_Data']})**")
+    st.markdown(f"- Selic 2026: **{macro['Focus_Selic_2026']}**")
+st.sidebar.divider()
+mercado_selecionado = st.sidebar.radio("Mercado:", ["Brasil", "EUA"], on_change=ativar_filtros)
+estrategia_ativa = st.sidebar.selectbox(
+    "Estratégia:",
+    ["Value Investing (Graham/Buffett)", "Análise Técnica (Trader)",
+     "Growth Investing", "Dividend Investing", "Position Trading"]
+)
+busca_direta = st.sidebar.text_input(f"🔍 Busca Rápida ({mercado_selecionado}):").upper().strip()
+with st.sidebar.expander("📊 Filtros de Valuation", expanded=True):
+    f_pl = st.slider("P/L Máximo", 0.0, 50.0, 25.0, step=0.5, on_change=ativar_filtros)
+    f_pvp = st.slider("P/VP Máximo", 0.0, 10.0, 3.0, step=0.1, on_change=ativar_filtros)
+    f_dy = st.slider("DY Mínimo (%)", 0.0, 20.0, 4.0, step=0.5, on_change=ativar_filtros)
+    f_div_ebitda = st.slider("Dív.Líq/EBITDA Máx", 0.0, 15.0, 3.0, step=0.5, on_change=ativar_filtros)
+if st.sidebar.button("Resetar Filtros"):
+    st.session_state.filtros_ativos = False
+    st.rerun()
 # ===================== LISTA DE ATIVOS =====================
-mercado_selecionado = st.sidebar.radio("Mercado:", ["Brasil", "EUA"])
 if mercado_selecionado == "Brasil":
-    lista_base = ["PETR4", "VALE3", "ITUB4", "BBAS3", "B3SA3", "EGIE3", "WEGE3", "PRIO3", "JBSS3"]
+    lista_base = ["PETR4", "VALE3", "ITUB4", "BBAS3", "BBDC4", "SANB11", "B3SA3", "EGIE3", "TRPL4", "TAEE11", "WEGE3", "PRIO3", "JBSS3"]
     moeda_simbolo = "R$"
 else:
     lista_base = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA"]
     moeda_simbolo = "US$"
-
-busca_direta = st.sidebar.text_input(f"🔍 Busca Rápida ({mercado_selecionado}):").upper().strip()
-tickers_para_processar = [busca_direta] if busca_direta else lista_base
-
+# ===================== CABEÇALHO =====================
+st.title(f"🤖 Monitor IA - {mercado_selecionado}")
+st.caption(f"Atualização: {time.strftime('%H:%M:%S')} | Local: Blumenau/SC")
+# ===================== TABS =====================
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "📈 Gráfico Técnico", "📉 Fundamentalista", "📜 Backtest"])
 # ===================== PROCESSAMENTO =====================
+tickers_para_processar = [busca_direta] if busca_direta else lista_base
 dados_vencedoras = []
 if tickers_para_processar:
-    with st.spinner("📡 Baixando dados..."):
+    with st.spinner("📡 Baixando dados em batch..."):
         infos, hists = obter_dados_batch(tickers_para_processar, mercado_selecionado)
     for tkr in tickers_para_processar:
         info = infos.get(tkr, {})
         hist = hists.get(tkr, pd.DataFrame())
-        resultado = processar_ativo(tkr, info, hist, "Value Investing (Graham/Buffett)", False, 25, 3, 4, 3, busca_direta, mercado_selecionado)
+        resultado = processar_ativo(
+            tkr, info, hist, estrategia_ativa, st.session_state.filtros_ativos,
+            f_pl, f_pvp, f_dy, f_div_ebitda, busca_direta, mercado_selecionado
+        )
         if resultado:
             dados_vencedoras.append(resultado)
-
-# ===================== TABS =====================
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "📈 Gráfico Técnico", "📉 Fundamentalista", "📜 Backtest"])
-
-st.title(f"🤖 Monitor IA - {mercado_selecionado}")
-st.caption(f"Atualização: {time.strftime('%H:%M:%S')} | Local: Blumenau/SC")
-
+# ===================== TAB 1 - OVERVIEW =====================
+with tab1:
+    if dados_vencedoras:
+        st.subheader(f"🏆 Ranking - Estratégia: {estrategia_ativa}")
+        df_resumo = pd.DataFrame(dados_vencedoras)
+        df_resumo = df_resumo[["Ticker", "Preço", "DY %", "Upside %", "Veredito", "Motivo",
+                               "TaxaCompra", "ExpectancyCompra", "SharpeCompra", "QtdCompra"]]
+        st.dataframe(
+            df_resumo.sort_values(by="ExpectancyCompra", ascending=False),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Veredito": st.column_config.TextColumn("Veredito"),
+                "Motivo": st.column_config.TextColumn("Motivo da IA", width="medium"),
+                "TaxaCompra": st.column_config.NumberColumn("Win Rate", format="%.1f%%"),
+                "ExpectancyCompra": st.column_config.NumberColumn("Expectancy", format="%.2f%%"),
+                "SharpeCompra": st.column_config.NumberColumn("Sharpe", format="%.2f"),
+                "QtdCompra": st.column_config.NumberColumn("Sinais"),
+            },
+        )
+    else:
+        st.info("Nenhum ativo encontrado com os filtros atuais.")
 # ===================== TAB 2 - GRÁFICO TÉCNICO (MELHORADO) =====================
 with tab2:
     st.subheader("📈 Gráfico Técnico")
     if dados_vencedoras:
         for acao in dados_vencedoras:
-            hist = acao["Hist"]
+            hist = acao["Hist"].copy()
             if hist.empty:
+                st.warning(f"Sem dados históricos para {acao['Ticker']}")
                 continue
 
-            # Cálculo de indicadores
-            hist = hist.copy()
-            hist['SMA20'] = hist['Close'].rolling(20).mean()
-            hist['SMA200'] = hist['Close'].rolling(200).mean()
-            hist['BB_Mid'] = hist['Close'].rolling(20).mean()
-            hist['BB_Std'] = hist['Close'].rolling(20).std()
-            hist['BB_Upper'] = hist['BB_Mid'] + 2 * hist['BB_Std']
-            hist['BB_Lower'] = hist['BB_Mid'] - 2 * hist['BB_Std']
-            rsi = calcular_rsi_series(hist['Close'])
+            # Indicadores técnicos
+            hist['SMA20'] = hist['Close'].rolling(window=20).mean()
+            hist['SMA200'] = hist['Close'].rolling(window=200).mean()
+            hist['BB_Mid'] = hist['Close'].rolling(window=20).mean()
+            hist['BB_Std'] = hist['Close'].rolling(window=20).std()
+            hist['BB_Upper'] = hist['BB_Mid'] + (2 * hist['BB_Std'])
+            hist['BB_Lower'] = hist['BB_Mid'] - (2 * hist['BB_Std'])
+            rsi_series = calcular_rsi_series(hist['Close'])
 
-            # Gráfico com subplots
-            fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
-                                vertical_spacing=0.08, 
-                                row_heights=[0.6, 0.2, 0.2],
-                                subplot_titles=(f"{acao['Ticker']} - Candlestick + Bollinger", "Volume", "RSI"))
+            # Gráfico profissional
+            fig = make_subplots(
+                rows=3, cols=1,
+                shared_xaxes=True,
+                vertical_spacing=0.08,
+                row_heights=[0.65, 0.20, 0.15],
+                subplot_titles=(f"{acao['Ticker']} - Candlestick + Bollinger + SMAs", "Volume", "RSI (14)")
+            )
 
-            # Candlestick + Bollinger + SMAs
-            fig.add_trace(go.Candlestick(x=hist.index,
-                                         open=hist['Open'], high=hist['High'],
-                                         low=hist['Low'], close=hist['Close'],
-                                         name="Preço"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA20'], name="SMA 20", line=dict(color='yellow')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA200'], name="SMA 200", line=dict(color='orange')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=hist.index, y=hist['BB_Upper'], name="BB Upper", line=dict(color='rgba(0,255,0,0.5)')), row=1, col=1)
-            fig.add_trace(go.Scatter(x=hist.index, y=hist['BB_Lower'], name="BB Lower", line=dict(color='rgba(255,0,0,0.5)')), row=1, col=1)
+            # Candlestick + Bandas + SMAs
+            fig.add_trace(go.Candlestick(
+                x=hist.index, open=hist['Open'], high=hist['High'],
+                low=hist['Low'], close=hist['Close'], name="Preço"
+            ), row=1, col=1)
+            fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA20'], name="SMA 20", line=dict(color="yellow", width=1.5)), row=1, col=1)
+            fig.add_trace(go.Scatter(x=hist.index, y=hist['SMA200'], name="SMA 200", line=dict(color="orange", width=1.5)), row=1, col=1)
+            fig.add_trace(go.Scatter(x=hist.index, y=hist['BB_Upper'], name="Bollinger Upper", line=dict(color="rgba(0,255,0,0.5)")), row=1, col=1)
+            fig.add_trace(go.Scatter(x=hist.index, y=hist['BB_Lower'], name="Bollinger Lower", line=dict(color="rgba(255,0,0,0.5)")), row=1, col=1)
 
             # Volume
-            fig.add_trace(go.Bar(x=hist.index, y=hist['Volume'], name="Volume", marker_color='rgba(100,100,100,0.6)'), row=2, col=1)
+            fig.add_trace(go.Bar(x=hist.index, y=hist['Volume'], name="Volume", marker_color="rgba(128,128,128,0.6)"), row=2, col=1)
 
             # RSI
-            fig.add_trace(go.Scatter(x=hist.index, y=rsi, name="RSI", line=dict(color='purple')), row=3, col=1)
+            fig.add_trace(go.Scatter(x=hist.index, y=rsi_series, name="RSI", line=dict(color="purple", width=1.5)), row=3, col=1)
             fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
-            fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
+            fig.add_hline(y=30, line_dash="dash", line_color="lime", row=3, col=1)
 
-            fig.update_layout(height=700, template="plotly_dark", showlegend=True, 
-                              title_text=f"Análise Técnica - {acao['Empresa']} ({acao['Ticker']})")
-            fig.update_xaxes(rangeslider_visible=False)
+            fig.update_layout(
+                height=750,
+                template="plotly_dark",
+                showlegend=True,
+                title_text=f"Análise Técnica Detalhada - {acao['Empresa']} ({acao['Ticker']})",
+                xaxis_rangeslider_visible=False
+            )
 
-            st.plotly_chart(fig, use_container_width=True, key=f"chart_{acao['Ticker']}")
-
+            st.plotly_chart(fig, use_container_width=True, key=f"chart_tecnico_{acao['Ticker']}")
             st.divider()
     else:
-        st.info("Use a busca direta ou aguarde carregamento dos ativos.")
-
-# ===================== OUTRAS TABS (mantidas) =====================
-with tab1:
-    if dados_vencedoras:
-        st.subheader("🏆 Ranking")
-        df = pd.DataFrame(dados_vencedoras)
-        st.dataframe(df[["Ticker", "Preço", "DY %", "Veredito"]], use_container_width=True, hide_index=True)
-    else:
-        st.info("Use os filtros ou faça uma busca direta para começar.")
-
+        st.info("Use a busca direta ou aguarde o carregamento dos ativos.")
+# ===================== TAB 3 - FUNDAMENTALISTA =====================
 with tab3:
     st.subheader("📉 Análise Fundamentalista")
     if dados_vencedoras:
         for acao in dados_vencedoras:
             st.write(f"**{acao['Empresa']} ({acao['Ticker']})**")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("P/L", round(acao["P/L"], 2))
+            col2.metric("P/VP", round(acao.get("P/VP", 0), 2))
+            col3.metric("DY", f"{acao['DY %']:.2f}%")
+            st.metric("Dívida Líquida / EBITDA", round(acao["Dívida"], 2))
             score = acao.get("ValueScore", 0)
             criteria = acao.get("ValueCriteria", [])
             st.markdown(f"**Value Score: {score}/4**")
             st.progress(score / 4)
             if criteria:
-                st.caption("Critérios: " + " • ".join(criteria))
+                st.caption("Critérios atendidos: " + " • ".join(criteria))
             if acao.get("Links"):
                 st.markdown("**Últimas Manchetes:**")
                 for n in acao["Links"]:
@@ -362,17 +499,22 @@ with tab3:
             st.divider()
     else:
         st.info("Nenhum ativo encontrado.")
-
+# ===================== TAB 4 - BACKTEST =====================
 with tab4:
     st.subheader("📜 Backtest & Estatísticas")
     if dados_vencedoras:
         df = pd.DataFrame(dados_vencedoras)
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         col1.metric("Ativos Analisados", len(df))
         col2.metric("Média Expectancy", f"{df['ExpectancyCompra'].mean():.2f}%")
         col3.metric("Média Sharpe", f"{df['SharpeCompra'].mean():.2f}")
-        st.dataframe(df[["Ticker", "ExpectancyCompra", "SharpeCompra", "QtdCompra"]].round(2), use_container_width=True, hide_index=True)
+        col4.metric("Total Sinais Compra", int(df['QtdCompra'].sum()))
+        st.dataframe(
+            df[["Ticker", "ExpectancyCompra", "SharpeCompra", "QtdCompra"]].round(2),
+            use_container_width=True,
+            hide_index=True
+        )
     else:
-        st.info("Execute uma análise para ver estatísticas.")
-
-st.info("💡 Use a busca rápida para visualizar gráficos técnicos.")
+        st.info("Execute uma análise para ver estatísticas de backtest.")
+# ===================== FIM =====================
+st.info("💡 Use os filtros ou faça uma busca direta para começar.")
