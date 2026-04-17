@@ -258,7 +258,6 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
     hist = hist.copy()
     hist['SMA20'] = hist['Close'].rolling(window=20).mean()
 
-    # Cálculos fundamentais
     pl = info.get("trailingPE", 0) or 0
     pvp = info.get("priceToBook", 0) or 0
     dy = (info.get("dividendYield", 0) or 0) * 100
@@ -486,9 +485,7 @@ with tab2:
         for acao in dados_vencedoras:
             st.subheader(f"{acao['Empresa']} ({acao['Ticker']}) - {acao['Veredito']}")
 
-            hist_df = acao["Hist"]
-
-            # Bandas de Bollinger
+            hist_df = acao["Hist"].copy()
             hist_df['SMA20'] = hist_df['Close'].rolling(window=20).mean()
             hist_df['STD20'] = hist_df['Close'].rolling(window=20).std()
             hist_df['BB_Upper'] = hist_df['SMA20'] + (hist_df['STD20'] * 2)
@@ -497,7 +494,6 @@ with tab2:
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03,
                                 subplot_titles=("Candlestick + Bollinger Bands + SMA20", "Volume"))
 
-            # Candlestick
             fig.add_trace(go.Candlestick(
                 x=hist_df.index,
                 open=hist_df.get('Open', hist_df['Close']),
@@ -507,12 +503,13 @@ with tab2:
                 name="Candlestick"
             ), row=1, col=1)
 
-            # Bollinger Bands
-            fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['BB_Upper'], line=dict(color='red', width=1), name='BB Upper'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['BB_Lower'], line=dict(color='green', width=1), name='BB Lower'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['SMA20'], line=dict(color='yellow', width=1.5), name='SMA 20'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['BB_Upper'], 
+                                     line=dict(color='red', width=1), name='BB Upper'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['BB_Lower'], 
+                                     line=dict(color='green', width=1), name='BB Lower'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['SMA20'], 
+                                     line=dict(color='yellow', width=1.5), name='SMA 20'), row=1, col=1)
 
-            # Volume
             fig.add_trace(go.Bar(x=hist_df.index, y=hist_df.get('Volume', 0), 
                                  marker_color='rgba(100,100,100,0.6)', name='Volume'), row=2, col=1)
 
@@ -520,7 +517,6 @@ with tab2:
                               xaxis_rangeslider_visible=False, showlegend=True)
             st.plotly_chart(fig, use_container_width=True)
 
-            # Métricas rápidas
             c1, c2, c3 = st.columns(3)
             c1.metric("Preço Atual", f"{moeda_simbolo} {acao['Preço']:.2f}")
             c2.metric("Expectancy", f"{acao.get('ExpectancyCompra', 0):.2f}%")
@@ -537,7 +533,7 @@ with tab3:
             st.write(f"**{acao['Empresa']} ({acao['Ticker']})**")
             col1, col2, col3 = st.columns(3)
             col1.metric("P/L", round(acao["P/L"], 2))
-            col2.metric("P/VP", round(acao.get("P/VP", 0), 2))  # se tiver
+            col2.metric("P/VP", round(acao.get("P/VP", pvp), 2))
             col3.metric("DY", f"{acao['DY %']:.2f}%")
             st.metric("Dívida Líquida / EBITDA", round(acao["Dívida"], 2))
             st.progress(acao["ValueScore"] / 4)
@@ -549,8 +545,7 @@ with tab3:
 # ===================== TAB 4 - BACKTEST =====================
 with tab4:
     st.subheader("📜 Backtest & Estatísticas")
-    st.info("Em desenvolvimento - Aqui virá o histórico de performance da IA.")
+    st.info("Em desenvolvimento — Aqui virá o histórico de performance da IA ao longo do tempo.")
 
-# ===================== FIM =====================
 else:
     st.info("💡 Use os filtros ou faça uma busca direta para começar.")
