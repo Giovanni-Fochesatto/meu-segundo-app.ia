@@ -11,3 +11,8 @@ lxml_html_clean
 lxml
 googlesearch-python
 beautifulsoup4
+
+
+
+numpy
+plotly
