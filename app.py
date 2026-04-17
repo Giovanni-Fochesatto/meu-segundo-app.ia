@@ -6,6 +6,7 @@ import time
 import feedparser
 
 st.set_page_config(page_title="Monitor IA Pro", layout="wide")
+st_autorefresh(interval=300 * 1000, key="data_refresh")
 
 if "filtros_ativos" not in st.session_state:
     st.session_state.filtros_ativos = False
@@ -31,10 +32,11 @@ def calcular_score_value(info):
         criteria.append("Margem boa")
     return score, criteria
 
-# ===================== CACHE =====================
 @st.cache_data(ttl=600)
 def obter_dados_batch(tickers, mercado):
-    tickers_yf = [t + ".SA" if mercado == "Brasil" else t for t in tickers]
+    if not tickers:
+        return {}, {}
+    tickers_yf = [t + ".SA" if mercado == "Brasil" and not t.endswith(".SA") else t for t in tickers]
     hist_multi = yf.download(tickers_yf, period="2y", group_by="ticker", auto_adjust=True, progress=False)
     info_dict = {}
     hist_dict = {}
@@ -42,7 +44,6 @@ def obter_dados_batch(tickers, mercado):
         t_yf = tickers_yf[i]
         try:
             info_dict[t_orig] = yf.Ticker(t_yf).info
-            # Tratamento multi-level
             if isinstance(hist_multi.columns, pd.MultiIndex):
                 if t_yf in hist_multi.columns.get_level_values(0):
                     hist_dict[t_orig] = hist_multi[t_yf]
@@ -55,16 +56,15 @@ def obter_dados_batch(tickers, mercado):
             hist_dict[t_orig] = pd.DataFrame()
     return info_dict, hist_dict
 
-# ===================== PROCESSAMENTO =====================
 def processar_ativo(tkr, info, hist):
     if hist.empty or not info:
         return None
 
     # Preço atual seguro
     if isinstance(hist.columns, pd.MultiIndex):
-        close_series = hist[('Close', tkr)] if ('Close', tkr) in hist.columns else hist.iloc[:, -1]
+        close_series = hist.get(('Close', tkr), hist.iloc[:, -1])
     else:
-        close_series = hist["Close"] if "Close" in hist.columns else hist.iloc[:, -1]
+        close_series = hist.get("Close", hist.iloc[:, -1])
 
     p_atual = float(close_series.iloc[-1]) if not close_series.empty else 0
 
@@ -72,20 +72,20 @@ def processar_ativo(tkr, info, hist):
     dy = (info.get("dividendYield", 0) or 0) * 100
     score_value, criteria = calcular_score_value(info)
 
-    veredito = "NEUTRO ⚖️"
-    motivo = "Dados carregados"
+    veredito = "NEUTRO ⚖️" if score_value < 3 else "VALOR ✅"
+    motivo = f"Value Score: {score_value}/4"
 
     return {
         "Ticker": tkr,
         "Empresa": info.get("shortName", tkr),
-        "Preço": p_atual,
-        "P/L": pl,
-        "DY %": dy,
+        "Preço": round(p_atual, 2),
+        "P/L": round(pl, 2),
+        "DY %": round(dy, 2),
         "Veredito": veredito,
         "Motivo": motivo,
         "ValueScore": score_value,
         "ValueCriteria": criteria,
-        "Links": []  # será preenchido com notícias
+        "Links": []  
     }
 
 # ===================== INTERFACE =====================
@@ -117,7 +117,7 @@ with tab1:
         st.subheader("🏆 Ranking")
         df = pd.DataFrame(dados_vencedoras)
         st.dataframe(
-            df[["Ticker", "Preço", "DY %", "Veredito"]],
+            df[["Ticker", "Preço", "DY %", "Veredito", "Motivo"]],
             use_container_width=True,
             hide_index=True
         )
