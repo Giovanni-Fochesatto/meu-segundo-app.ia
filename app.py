@@ -103,7 +103,7 @@ def obter_indices():
     return resultados
 
 
-@st.cache_data(ttl=60, show_spinner=False)   # ttl curto para testes
+@st.cache_data(ttl=90, show_spinner=False)
 def obter_cambio():
     moedas = {
         "Dólar": "USDBRL=X",
@@ -125,53 +125,37 @@ def obter_cambio():
                 atual = float(t.fast_info.last_price)
                 variacao = 0.0
             resultados[nome] = (atual, variacao)
-        except Exception:
+        except:
             resultados[nome] = (0.0, 0.0)
 
-    # ===================== BITCOIN - COM DEBUG =====================
+    # ===================== BITCOIN EM REAL =====================
     btc_real = 0.0
     variacao_btc = 0.0
-    debug_info = ""
 
-    # 1. Tentativa direta com BTC-BRL
+    # 1. Tenta BTC-BRL direto
     try:
         t = yf.Ticker("BTC-BRL")
         data = t.history(period="2d")
         if not data.empty and len(data) >= 2:
             atual = float(data["Close"].iloc[-1])
-            anterior = float(data["Close"].iloc[-2])
-            variacao_btc = ((atual / anterior) - 1) * 100
         else:
             atual = float(t.fast_info.last_price)
-        
         if atual > 100000:
             btc_real = atual
-            debug_info = f"BTC-BRL direto: R$ {atual:,.0f}"
     except:
         pass
 
-    # 2. Fallback principal: BTC-USD × Dólar (mais confiável)
+    # 2. Fallback: BTC-USD convertido pelo dólar atual
     if btc_real < 100000:
         try:
             btc_usd = float(yf.Ticker("BTC-USD").fast_info.last_price)
-            dolar_brl = float(resultados.get("Dólar", (5.70, 0))[0])
-            
+            dolar_brl = resultados.get("Dólar", (4.99, 0))[0]
             btc_real = btc_usd * dolar_brl
             variacao_btc = 0.0
-            
-            debug_info = f"BTC-USD: ${btc_usd:,.0f} × Dólar R$ {dolar_brl:.3f} = R$ {btc_real:,.0f}"
-        except Exception as e:
-            debug_info = f"Erro no fallback: {str(e)}"
-
-    # Se ainda não conseguiu valor razoável
-    if btc_real < 100000:
-        debug_info = "Falha total no Bitcoin - usando valor zero"
+        except:
+            pass
 
     resultados["Bitcoin"] = (btc_real, variacao_btc)
-
-    # ===================== DEBUG NO SIDEBAR =====================
-    st.sidebar.info(f"**Debug Bitcoin:** {debug_info}")
-
     return resultados
 
 
@@ -185,12 +169,8 @@ def obter_dados_batch(tickers, mercado):
         for t in tickers
     ]
     hist_multi = yf.download(
-        tickers_yf,
-        period="5y",
-        group_by="ticker",
-        auto_adjust=True,
-        progress=False,
-        threads=True,
+        tickers_yf, period="5y", group_by="ticker",
+        auto_adjust=True, progress=False, threads=True
     )
     info_dict = {}
     hist_dict = {}
@@ -259,7 +239,7 @@ def processar_ativo(tkr, info, hist, estrategia_ativa, filtros_ativos,
             motivo_detalhe = "Preço acima do valor intrínseco de Graham."
         else:
             veredito, cor = "NEUTRO ⚖️", "warning"
-            motivo_detalhe = "Ativo próximo ao preço justo, sem margem de segurança clara."
+            motivo_detalhe = "Ativo próximo ao preço justo."
     else:
         if rsi_val > 70 and score_n > score_p:
             veredito, cor = "VENDA 🚨", "error"
@@ -319,12 +299,12 @@ st.sidebar.divider()
 st.sidebar.subheader("💱 Câmbio em Tempo Real")
 cambio = obter_cambio()
 
-# Primeira linha: Dólar | Euro
+# Layout solicitado: Dólar | Euro
 col1, col2 = st.sidebar.columns(2)
 col1.metric("Dólar", f"R$ {cambio['Dólar'][0]:.2f}", f"{cambio['Dólar'][1]:.2f}%")
 col2.metric("Euro",  f"R$ {cambio['Euro'][0]:.2f}",  f"{cambio['Euro'][1]:.2f}%")
 
-# Segunda linha: Libra | Bitcoin
+# Libra | Bitcoin
 col3, col4 = st.sidebar.columns(2)
 col3.metric("Libra", f"R$ {cambio['Libra'][0]:.2f}", f"{cambio['Libra'][1]:.2f}%")
 col4.metric("Bitcoin", f"R$ {cambio['Bitcoin'][0]:,.0f}", f"{cambio['Bitcoin'][1]:.2f}%")
